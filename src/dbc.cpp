@@ -1,3 +1,4 @@
+#include <cctype>
 #include <cstdint>
 #include <cstdio>
 #include <fstream>
@@ -260,7 +261,16 @@ void DbcParser::parse_dbc_messages(const std::vector<std::string>& lines) {
 			continue;
 		}
 
-		if (std::regex_search(line, match, message_re)) {
+		// message_re, signal_re, and value_re each require a distinct literal prefix
+		// ("BO_", "<one whitespace char>SG_", "VAL_"), so at most one of the three can
+		// ever match a given line. Checking the cheap prefix first avoids running the
+		// other two (expensive, especially on libstdc++'s backtracking std::regex)
+		// against lines that could never match them.
+		const bool could_be_message = line.compare(0, 3, "BO_") == 0;
+		const bool could_be_signal = line.size() >= 4 && std::isspace(static_cast<unsigned char>(line[0])) != 0 && line.compare(1, 3, "SG_") == 0;
+		const bool could_be_value = line.compare(0, 4, "VAL_") == 0;
+
+		if (could_be_message && std::regex_search(line, match, message_re)) {
 			uint32_t message_id = static_cast<uint32_t>(to_uint(match.str(MESSAGE_ID_GROUP), line, "message id"));
 			std::string name = match.str(MESSAGE_NAME_GROUP);
 			const uint64_t message_size = to_uint(match.str(MESSAGE_SIZE_GROUP), line, "message size");
@@ -278,7 +288,7 @@ void DbcParser::parse_dbc_messages(const std::vector<std::string>& lines) {
 			continue;
 		}
 
-		if (std::regex_search(line, match, signal_re) && !messages.empty()) {
+		if (could_be_signal && !messages.empty() && std::regex_search(line, match, signal_re)) {
 			std::string name = match.str(SIGNAL_NAME_GROUP);
 
 			// Multiplexing markers: "M" marks the multiplexor signal, "m<N>" marks
@@ -331,7 +341,7 @@ void DbcParser::parse_dbc_messages(const std::vector<std::string>& lines) {
 			continue;
 		}
 
-		if (std::regex_search(line, match, value_re) && !messages.empty()) {
+		if (could_be_value && !messages.empty() && std::regex_search(line, match, value_re)) {
 			uint32_t message_id = static_cast<uint32_t>(to_uint(match.str(2), line, "value description message id"));
 			std::string signal_name = match.str(3);
 
