@@ -20,72 +20,83 @@ uint64_t low_bits_mask(uint32_t bits) {
 	return bits >= MAX_SIGNAL_BITS ? ~0ULL : ((1ULL << bits) - 1);
 }
 
-// Extracts the raw (unscaled) value of `signal` from `data`.
-// Returns ParseSignalsStatus::Success, or an error status without touching `raw`.
-Message::ParseSignalsStatus extract_raw(const Signal& signal, const std::vector<uint8_t>& data, uint64_t& raw) {
+// Motorola (Big Endian) extraction.
+// In DBC, Motorola start_bit is the MSB.
+// We need to extract 'signal.size' bits starting from 'start_bit' going backwards in bit index (MSB to LSB).
+Message::ParseSignalsStatus extract_raw_motorola(const Signal& signal, const std::vector<uint8_t>& data, uint64_t& raw) {
 	const uint32_t size = static_cast<uint32_t>(data.size());
-	const uint32_t total_bits = size * ONE_BYTE;
 	uint64_t raw_value = 0;
+	uint32_t current_bit = signal.start_bit;
+	for (uint32_t i = 0; i < signal.size; ++i) {
+		uint32_t byte_idx = current_bit / ONE_BYTE;
+		uint32_t bit_in_byte = current_bit % ONE_BYTE;
 
-	if (signal.is_bigendian) {
-		// Motorola (Big Endian)
-		// In DBC, Motorola start_bit is the MSB.
-		// We need to extract 'signal.size' bits starting from 'start_bit' going backwards in bit index (MSB to LSB).
-
-		uint32_t current_bit = signal.start_bit;
-		for (uint32_t i = 0; i < signal.size; ++i) {
-			uint32_t byte_idx = current_bit / ONE_BYTE;
-			uint32_t bit_in_byte = current_bit % ONE_BYTE;
-
-			if (byte_idx >= size) {
-				return Message::ParseSignalsStatus::ErrorSignalOutOfBounds;
-			}
-			if ((data[byte_idx] & (1U << bit_in_byte)) != 0U) {
-				raw_value |= (1ULL << (signal.size - 1 - i));
-			}
-
-			// Motorola bit counting: MSB to LSB
-			// 7,6,5,4,3,2,1,0, 15,14,13,12,11,10,9,8, ...
-			if (bit_in_byte == 0) {
-				current_bit += (2 * ONE_BYTE) - 1;
-			} else {
-				current_bit -= 1;
-			}
-		}
-	} else {
-		// Intel (Little Endian)
-		// In DBC, Intel start_bit is the LSB.
-		const uint32_t bit_pos = signal.start_bit;
-		if (bit_pos + signal.size > total_bits) {
+		if (byte_idx >= size) {
 			return Message::ParseSignalsStatus::ErrorSignalOutOfBounds;
 		}
+		if ((data[byte_idx] & (1U << bit_in_byte)) != 0U) {
+			raw_value |= (1ULL << (signal.size - 1 - i));
+		}
 
-		const uint32_t start_byte = bit_pos / ONE_BYTE;
-		const uint32_t end_byte = (bit_pos + signal.size - 1) / ONE_BYTE;
-		const uint32_t bytes_to_read = end_byte - start_byte + 1;
-
-		// The bytes are accumulated into a 64-bit temporary, so the fast path only
-		// works when the signal (plus its sub-byte bit offset) fits within 8 bytes;
-		// shifting by 64 or more would be undefined behavior.
-		if (bytes_to_read <= BYTES_PER_UINT64) {
-			uint64_t temp = 0;
-			for (uint32_t i = 0; i < bytes_to_read; ++i) {
-				temp |= static_cast<uint64_t>(data[start_byte + i]) << (i * ONE_BYTE);
-			}
-			raw_value = (temp >> (bit_pos % ONE_BYTE)) & low_bits_mask(signal.size);
+		// Motorola bit counting: MSB to LSB
+		// 7,6,5,4,3,2,1,0, 15,14,13,12,11,10,9,8, ...
+		if (bit_in_byte == 0) {
+			current_bit += (2 * ONE_BYTE) - 1;
 		} else {
-			// Signal spans more than 8 bytes; extract bit by bit.
-			for (uint32_t i = 0; i < signal.size; ++i) {
-				const uint32_t bit = bit_pos + i;
-				if ((data[bit / ONE_BYTE] & (1U << (bit % ONE_BYTE))) != 0U) {
-					raw_value |= (1ULL << i);
-				}
-			}
+			current_bit -= 1;
 		}
 	}
 
 	raw = raw_value;
 	return Message::ParseSignalsStatus::Success;
+}
+
+// Intel little-endian fallback for signals spanning more than 8 bytes; extracts bit by bit.
+uint64_t extract_raw_intel_bitwise(const Signal& signal, const std::vector<uint8_t>& data, uint32_t bit_pos) {
+	uint64_t raw_value = 0;
+	for (uint32_t i = 0; i < signal.size; ++i) {
+		const uint32_t bit = bit_pos + i;
+		if ((data[bit / ONE_BYTE] & (1U << (bit % ONE_BYTE))) != 0U) {
+			raw_value |= (1ULL << i);
+		}
+	}
+	return raw_value;
+}
+
+// Intel (Little Endian) extraction.
+// In DBC, Intel start_bit is the LSB.
+Message::ParseSignalsStatus extract_raw_intel(const Signal& signal, const std::vector<uint8_t>& data, uint64_t& raw) {
+	const uint32_t size = static_cast<uint32_t>(data.size());
+	const uint32_t total_bits = size * ONE_BYTE;
+	const uint32_t bit_pos = signal.start_bit;
+	if (bit_pos + signal.size > total_bits) {
+		return Message::ParseSignalsStatus::ErrorSignalOutOfBounds;
+	}
+
+	const uint32_t start_byte = bit_pos / ONE_BYTE;
+	const uint32_t end_byte = (bit_pos + signal.size - 1) / ONE_BYTE;
+	const uint32_t bytes_to_read = end_byte - start_byte + 1;
+
+	// The bytes are accumulated into a 64-bit temporary, so the fast path only
+	// works when the signal (plus its sub-byte bit offset) fits within 8 bytes;
+	// shifting by 64 or more would be undefined behavior.
+	if (bytes_to_read <= BYTES_PER_UINT64) {
+		uint64_t temp = 0;
+		for (uint32_t i = 0; i < bytes_to_read; ++i) {
+			temp |= static_cast<uint64_t>(data[start_byte + i]) << (i * ONE_BYTE);
+		}
+		raw = (temp >> (bit_pos % ONE_BYTE)) & low_bits_mask(signal.size);
+	} else {
+		raw = extract_raw_intel_bitwise(signal, data, bit_pos);
+	}
+
+	return Message::ParseSignalsStatus::Success;
+}
+
+// Extracts the raw (unscaled) value of `signal` from `data`.
+// Returns ParseSignalsStatus::Success, or an error status without touching `raw`.
+Message::ParseSignalsStatus extract_raw(const Signal& signal, const std::vector<uint8_t>& data, uint64_t& raw) {
+	return signal.is_bigendian ? extract_raw_motorola(signal, data, raw) : extract_raw_intel(signal, data, raw);
 }
 } // namespace
 

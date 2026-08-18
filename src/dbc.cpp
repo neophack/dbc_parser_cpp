@@ -90,7 +90,7 @@ constexpr unsigned SIGNAL_RECEIVER_GROUP = 17;
 constexpr size_t MAX_MATCHABLE_LINE_LENGTH = 1000;
 
 constexpr uint64_t MAX_MESSAGE_SIZE_BYTES = 255;
-constexpr uint32_t MAX_SIGNAL_BITS = 64;
+constexpr uint32_t MAX_SIGNAL_SIZE_BITS = 64;
 
 constexpr unsigned MESSAGE_ID_GROUP = 2;
 constexpr unsigned MESSAGE_NAME_GROUP = 3;
@@ -306,7 +306,7 @@ void DbcParser::parse_dbc_messages(const std::vector<std::string>& lines) {
 
 			uint32_t start_bit = static_cast<uint32_t>(to_uint(match.str(SIGNAL_START_BIT_GROUP), line, "signal start bit"));
 			uint32_t size = static_cast<uint32_t>(to_uint(match.str(SIGNAL_SIZE_GROUP), line, "signal size"));
-			if (size < 1 || size > MAX_SIGNAL_BITS) {
+			if (size < 1 || size > MAX_SIGNAL_SIZE_BITS) {
 				// Some vendor exports (e.g. raw BLE/UWB payload messages) use a
 				// single signal spanning the whole message as an undissected
 				// blob, well past the 64 bits this library can decode into a
