@@ -1,0 +1,231 @@
+name: Libdbc Pipeline
+
+on: [push, pull_request, workflow_call, workflow_dispatch]
+
+env:
+  # Customize the CMake build type here (Release, Debug, RelWithDebInfo, etc.)
+  BUILD_TYPE: Release
+
+jobs:
+  linux-builds:
+    name: linux ${{matrix.cxx}}, C++${{matrix.std}}, ${{matrix.build_type}}
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        cxx:
+          - g++-11
+          - clang++-16
+        build_type: [Debug, Release]
+        std: [11]
+        include:
+          - cxx: g++-11
+            cc: gcc-11
+          - cxx: clang++-16
+            cc: clang-16
+            llvm_version: 16
+
+    env:
+      BUILD_TYPE: ${{matrix.build_type}}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install clang
+        if: ${{ matrix.llvm_version }}
+        run: |
+          wget https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh ${{ matrix.llvm_version }}
+
+      - name: Prepare environment
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y locales
+
+          sudo locale-gen de_DE.UTF-8
+
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          source "$HOME/.cargo/env"
+
+      - name: Print gcc version
+        run: gcc --version
+
+      - name: Configure build
+        env:
+          CC: ${{matrix.cc}}
+          CXX: ${{matrix.cxx}}
+        run: |
+          cmake -Bbuild -H$GITHUB_WORKSPACE               \
+                -DCMAKE_BUILD_TYPE=${{matrix.build_type}} \
+                -DCMAKE_CXX_STANDARD=${{matrix.std}}      \
+                -DCMAKE_CXX_STANDARD_REQUIRED=ON          \
+                -DCMAKE_CXX_EXTENSIONS=ON                 \
+                -DDBC_TEST_LOCALE_INDEPENDENCE=ON         \
+                -DDBC_GENERATE_SINGLE_HEADER=ON
+
+      - name: Build tests + lib
+        run: cmake --build build --parallel `nproc`
+
+      - name: Run tests
+        timeout-minutes: 3
+        env:
+            CTEST_OUTPUT_ON_FAILURE: 1
+        run: ctest --output-on-failure --test-dir build -j `nproc`
+
+      - name: Run install
+        run: cmake --install build --prefix .
+
+
+  windows-build:
+    name: ${{matrix.os}}, ${{matrix.std}}, ${{matrix.build_type}}, ${{matrix.platform}}
+    runs-on: ${{matrix.os}}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2025, windows-2022]
+        platform: [Win32, x64]
+        build_type: [Debug, Release]
+        std: [11]
+
+    env:
+      BUILD_TYPE: ${{matrix.build_type}}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure build
+        working-directory: ${{runner.workspace}}
+        run: |
+          cmake -S $Env:GITHUB_WORKSPACE                  `
+                -B ${{runner.workspace}}/build            `
+                -A ${{matrix.platform}}                   `
+                -DCMAKE_BUILD_TYPE=${{matrix.build_type}} `
+                -DCMAKE_CXX_STANDARD=${{matrix.std}}      `
+                -DCMAKE_CXX_STANDARD_REQUIRED=ON          `
+                -DCMAKE_CXX_EXTENSIONS=ON                 `
+                -DDBC_TEST_LOCALE_INDEPENDENCE=ON
+
+      - name: Build tests + lib
+        working-directory: ${{runner.workspace}}
+        run: cmake --build build --config ${{matrix.build_type}} --parallel %NUMBER_OF_PROCESSORS%
+        shell: cmd
+
+      - name: Run tests
+        timeout-minutes: 3
+        env:
+            CTEST_OUTPUT_ON_FAILURE: 1
+        working-directory: ${{runner.workspace}}
+        run: ctest --output-on-failure --test-dir build -j %NUMBER_OF_PROCESSORS%
+        shell: cmd
+
+  macos-builds:
+    name: ${{matrix.os}}, ${{matrix.cxx}}, C++${{matrix.std}}, ${{matrix.build_type}}
+    runs-on: ${{matrix.os}}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15-large]
+        cxx:
+          - g++
+          - clang++
+        build_type: [Debug, Release]
+        std: [11]
+        include:
+          - cxx: g++
+            cc: gcc
+          - cxx: clang++
+            cc: clang
+
+    env:
+      BUILD_TYPE: ${{matrix.build_type}}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure build
+        working-directory: ${{runner.workspace}}
+        env:
+          CC: ${{matrix.cc}}
+          CXX: ${{matrix.cxx}}
+        run: |
+          cmake -Bbuild -H$GITHUB_WORKSPACE               \
+                -DCMAKE_BUILD_TYPE=${{matrix.build_type}} \
+                -DCMAKE_CXX_STANDARD=${{matrix.std}}      \
+                -DCMAKE_CXX_STANDARD_REQUIRED=ON          \
+                -DCMAKE_CXX_EXTENSIONS=ON                 \
+                -DDBC_TEST_LOCALE_INDEPENDENCE=ON
+
+      - name: Build tests + lib
+        working-directory: ${{runner.workspace}}
+        run: cmake --build build --parallel `sysctl -n hw.ncpu`
+
+      - name: Run tests
+        timeout-minutes: 3
+        env:
+            CTEST_OUTPUT_ON_FAILURE: 1
+        working-directory: ${{runner.workspace}}
+        run: ctest --output-on-failure --test-dir build -j `sysctl -n hw.ncpu` -V
+
+  format-check:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install clang-format version
+      run: |
+          wget https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh 17
+
+          sudo apt update && sudo apt install -y clang-format-17
+          sudo ln -sf $(which clang-format-17) $(which clang-format)
+
+          test "$(clang-format --version)" == "$(clang-format-17 --version)"
+
+    - name: Test format with clang format
+      run: ./scripts/fmt.sh
+
+  clang-tidy-check:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install clang-tidy version
+      run: |
+          wget https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh 17
+
+          sudo apt update && sudo apt install -y clang-tidy-17
+          sudo ln -sf $(which clang-tidy-17) $(which clang-tidy)
+
+          test "$(clang-tidy --version)" == "$(clang-tidy-17 --version)"
+
+    - name: Make build directory
+      run: cmake -Bbuild -H$GITHUB_WORKSPACE
+
+    - name: Run clang-tidy check
+      run: cmake --build build --target clang-tidy-check
+
+  check-against-minimum-cmake:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Cmake install
+      run: |
+        wget https://github.com/Kitware/CMake/releases/download/v3.16.9/cmake-3.16.9-linux-x86_64.sh
+        chmod +x cmake-3.16.9-linux-x86_64.sh
+        sudo ./cmake-3.16.9-linux-x86_64.sh --skip-license --prefix=/usr/local
+        cmake --version
+
+    - name: Make build directory
+      run: cmake -Bbuild -H$GITHUB_WORKSPACE
+
+    - name: Run build
+      run: cmake --build build
+
