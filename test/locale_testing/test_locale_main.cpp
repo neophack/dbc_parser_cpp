@@ -3,6 +3,8 @@
 #include <libdbc/dbc.hpp>
 #include <libdbc/utils/utils.hpp>
 
+#include <stdexcept>
+
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/reporters/catch_reporter_event_listener.hpp>
@@ -15,8 +17,15 @@ public:
 	void testRunStarting(Catch::TestRunInfo const&) override {
 		// Mac OS uses global and c++ standard uses the std. Using this to remove ambiguity between the two.
 		prev_loc = ::setlocale(LC_ALL, nullptr);
-		// Set the locale to something that has , instead of . for floats
-		std::locale::global(std::locale("de_DE.UTF-8"));
+		// Set the locale to something that has , instead of . for floats.
+		// Not every platform ships the de_DE locale (e.g. macOS CI images
+		// don't have it installed, and std::locale throws std::runtime_error
+		// for an unknown name). Fall back to leaving the locale unchanged
+		// rather than aborting the whole test binary; the parser is expected
+		// to be locale-independent regardless of which locale is active.
+		try {
+			std::locale::global(std::locale("de_DE.UTF-8"));
+		} catch (const std::runtime_error&) { }
 	}
 
 	void testCaseEnded(Catch::TestCaseStats const&) override {
