@@ -1,3 +1,4 @@
+#include <cstddef>
 #include <cstdint>
 #include <libdbc/signal.hpp>
 #include <ostream>

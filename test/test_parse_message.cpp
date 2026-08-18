@@ -440,7 +440,7 @@ TEST_CASE("Parse Message CAN FD sized message (64 bytes) with signals across the
 	REQUIRE(p.get_messages().at(0).size() == 64);
 
 	std::vector<uint8_t> data(64, 0);
-	data[0] = 0xAB;  // FirstByte
+	data[0] = 0xAB; // FirstByte
 	data[32] = 0xCD; // MidByte, byte 32 == bit 256
 	data[63] = 0x81; // LastByte*/LastBit*, top and bottom bits set
 

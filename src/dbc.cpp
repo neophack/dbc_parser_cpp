@@ -88,6 +88,9 @@ constexpr unsigned SIGNAL_RECEIVER_GROUP = 17;
 // reaching the regex engine.
 constexpr size_t MAX_MATCHABLE_LINE_LENGTH = 1000;
 
+constexpr uint64_t MAX_MESSAGE_SIZE_BYTES = 255;
+constexpr uint32_t MAX_SIGNAL_BITS = 64;
+
 constexpr unsigned MESSAGE_ID_GROUP = 2;
 constexpr unsigned MESSAGE_NAME_GROUP = 3;
 constexpr unsigned MESSAGE_SIZE_GROUP = 4;
@@ -125,10 +128,9 @@ DbcParser::DbcParser()
 	, node_re("^(BU_:)\\s?((?:[\\w]+?\\s?)*)?")
 	, message_re("^(BO_)\\s(\\d+)\\s(\\w+)\\s*\\:\\s*(\\d+)\\s(\\w+|Vector__XXX)")
 	, value_re("^(VAL_)\\s(\\d+)\\s(\\w+)((?:\\s(\\d+)\\s\"([^\"]*)\")+)\\s;$")
-	,
-	signal_re(std::string("^") + whiteSpace + signalIdentifierPattern + whiteSpace + namePattern + multiplexPattern + whiteSpace + "\\:" + whiteSpace
-			  + bitStartPattern + "\\|" + lengthPattern + "\\@" + byteOrderPattern + signPattern + whiteSpace + offsetScalePattern + whiteSpace + minMaxPattern
-			  + whiteSpace + unitPattern + whiteSpace + receiverPattern) {
+	, signal_re(std::string("^") + whiteSpace + signalIdentifierPattern + whiteSpace + namePattern + multiplexPattern + whiteSpace + "\\:" + whiteSpace
+				+ bitStartPattern + "\\|" + lengthPattern + "\\@" + byteOrderPattern + signPattern + whiteSpace + offsetScalePattern + whiteSpace
+				+ minMaxPattern + whiteSpace + unitPattern + whiteSpace + receiverPattern) {
 }
 
 void DbcParser::parse_file(std::istream& stream) {
@@ -262,8 +264,9 @@ void DbcParser::parse_dbc_messages(const std::vector<std::string>& lines) {
 			uint32_t message_id = static_cast<uint32_t>(to_uint(match.str(MESSAGE_ID_GROUP), line, "message id"));
 			std::string name = match.str(MESSAGE_NAME_GROUP);
 			const uint64_t message_size = to_uint(match.str(MESSAGE_SIZE_GROUP), line, "message size");
-			if (message_size > 255) {
-				throw DbcFileParseError(line, "Message \"" + name + "\" has an unsupported size (" + std::to_string(message_size) + "); expected at most 255 bytes.");
+			if (message_size > MAX_MESSAGE_SIZE_BYTES) {
+				throw DbcFileParseError(line,
+										"Message \"" + name + "\" has an unsupported size (" + std::to_string(message_size) + "); expected at most 255 bytes.");
 			}
 			uint8_t size = static_cast<uint8_t>(message_size);
 			std::string node = match.str(MESSAGE_NODE_GROUP);
@@ -293,7 +296,7 @@ void DbcParser::parse_dbc_messages(const std::vector<std::string>& lines) {
 
 			uint32_t start_bit = static_cast<uint32_t>(to_uint(match.str(SIGNAL_START_BIT_GROUP), line, "signal start bit"));
 			uint32_t size = static_cast<uint32_t>(to_uint(match.str(SIGNAL_SIZE_GROUP), line, "signal size"));
-			if (size < 1 || size > 64) {
+			if (size < 1 || size > MAX_SIGNAL_BITS) {
 				// Some vendor exports (e.g. raw BLE/UWB payload messages) use a
 				// single signal spanning the whole message as an undissected
 				// blob, well past the 64 bits this library can decode into a

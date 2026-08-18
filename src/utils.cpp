@@ -1,9 +1,9 @@
 #include <cstddef>
 #include <fast_float/fast_float.h>
-#include <system_error>
 #include <istream>
 #include <libdbc/utils/utils.hpp>
 #include <string>
+#include <system_error>
 
 namespace Utils {
 
@@ -78,7 +78,9 @@ double String::convert_to_double(const std::string& value, double default_value)
 
 bool String::try_convert_to_double(const std::string& value, double& result) {
 	double converted_value = 0;
+	// NOLINTNEXTLINE -- fast_float's API takes a [begin, end) pointer range; both pointers stay within value's own buffer.
 	const auto answer = fast_float::from_chars(value.data(), value.data() + value.size(), converted_value);
+	// NOLINTNEXTLINE -- same [begin, end) pointer range as above.
 	if (answer.ec != std::errc() || answer.ptr != value.data() + value.size()) {
 		return false;
 	}

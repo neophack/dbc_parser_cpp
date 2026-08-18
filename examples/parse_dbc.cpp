@@ -25,8 +25,11 @@ int main(int argc, char** argv) {
 		std::printf("\n\nMessages (%zu):\n", parser.get_messages().size());
 
 		for (const auto& message : parser.get_messages()) {
-			std::printf("  %s (id=%u, %u bytes, %zu signals)\n", message.name().c_str(), message.id(),
-						static_cast<unsigned>(message.size()), message.get_signals().size());
+			std::printf("  %s (id=%u, %u bytes, %zu signals)\n",
+						message.name().c_str(),
+						message.id(),
+						static_cast<unsigned>(message.size()),
+						message.get_signals().size());
 		}
 
 		// Decode an 8-byte frame for the first message that fits a classic CAN frame.
@@ -37,8 +40,10 @@ int main(int argc, char** argv) {
 			const std::vector<uint8_t> data(message.size(), 0x42);
 			std::vector<double> values;
 			const auto status = parser.parse_message(message.id(), data, values);
-			std::printf("\nDecoding %u zeroed-0x42 frame -> %s (%zu values):\n", message.id(),
-						status == Libdbc::Message::ParseSignalsStatus::Success ? "success" : "error", values.size());
+			std::printf("\nDecoding %u zeroed-0x42 frame -> %s (%zu values):\n",
+						message.id(),
+						status == Libdbc::Message::ParseSignalsStatus::Success ? "success" : "error",
+						values.size());
 			for (size_t i = 0; i < values.size() && i < message.get_signals().size(); ++i) {
 				const auto& signal = message.get_signals().at(i);
 				std::printf("  %s = %f %s\n", signal.name.c_str(), values.at(i), signal.unit.c_str());
