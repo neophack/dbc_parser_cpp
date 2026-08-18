@@ -191,6 +191,185 @@ VAL_ 234 State1 123 "Description 1" 0 "Description 2" 90903489 "Big value and sp
 	REQUIRE(p.parse_message(234, data, result_values) == Libdbc::Message::ParseSignalsStatus::ErrorUnknownID);
 }
 
+TEST_CASE("get_message_by_id returns the message for a known id, nullptr otherwise") {
+	std::string dbc_contents = PRIMITIVE_DBC + R"(BO_ 234 MSG1: 8 Vector__XXX
+ SG_ Msg1Sig1 : 0|8@0+ (1,0) [0|0] "" Vector__XXX)";
+	const auto filename = create_temporary_dbc_with(dbc_contents.c_str());
+
+	Libdbc::DbcParser p;
+	p.parse_file(filename.c_str());
+
+	const auto* found = p.get_message_by_id(234);
+	REQUIRE(found != nullptr);
+	REQUIRE(found->name() == "MSG1");
+
+	REQUIRE(p.get_message_by_id(999) == nullptr);
+}
+
+TEST_CASE("Parse Message data larger than 64 bytes returns ErrorMessageToLong") {
+	std::string dbc_contents = PRIMITIVE_DBC + R"(BO_ 234 MSG1: 8 Vector__XXX
+ SG_ Msg1Sig1 : 0|8@0+ (1,0) [0|0] "" Vector__XXX)";
+	const auto filename = create_temporary_dbc_with(dbc_contents.c_str());
+
+	Libdbc::DbcParser p;
+	p.parse_file(filename.c_str());
+
+	std::vector<uint8_t> too_long(65, 0);
+	std::vector<double> out_values;
+	REQUIRE(p.parse_message(234, too_long, out_values) == Libdbc::Message::ParseSignalsStatus::ErrorMessageToLong);
+
+	std::vector<uint8_t> exactly_64(64, 0);
+	REQUIRE(p.parse_message(234, exactly_64, out_values) == Libdbc::Message::ParseSignalsStatus::Success);
+}
+
+TEST_CASE("Parse Message full 64 bit wide signal, little endian") {
+	std::string dbc_contents = PRIMITIVE_DBC + R"(BO_ 1 MSG1: 8 Vector__XXX
+ SG_ Unsigned64 : 0|64@1+ (1,0) [0|0] "" Vector__XXX)";
+	const auto filename = create_temporary_dbc_with(dbc_contents.c_str());
+
+	Libdbc::DbcParser p;
+	p.parse_file(filename.c_str());
+
+	std::vector<uint8_t> data(8, 0xFF);
+	std::vector<double> out_values;
+	REQUIRE(p.parse_message(1, data, out_values) == Libdbc::Message::ParseSignalsStatus::Success);
+	REQUIRE(out_values.size() == 1);
+	REQUIRE(Catch::Approx(out_values.at(0)) == 18446744073709551615.0);
+}
+
+TEST_CASE("Parse Message full 64 bit wide signed signal, little endian, all bits set is -1") {
+	std::string dbc_contents = PRIMITIVE_DBC + R"(BO_ 1 MSG1: 8 Vector__XXX
+ SG_ Signed64 : 0|64@1- (1,0) [0|0] "" Vector__XXX)";
+	const auto filename = create_temporary_dbc_with(dbc_contents.c_str());
+
+	Libdbc::DbcParser p;
+	p.parse_file(filename.c_str());
+
+	std::vector<uint8_t> data(8, 0xFF);
+	std::vector<double> out_values;
+	REQUIRE(p.parse_message(1, data, out_values) == Libdbc::Message::ParseSignalsStatus::Success);
+	REQUIRE(out_values.size() == 1);
+	REQUIRE(Catch::Approx(out_values.at(0)) == -1.0);
+}
+
+TEST_CASE("Parse Message full 64 bit wide signed signal, big endian, all bits set is -1") {
+	std::string dbc_contents = PRIMITIVE_DBC + R"(BO_ 1 MSG1: 8 Vector__XXX
+ SG_ Signed64Be : 7|64@0- (1,0) [0|0] "" Vector__XXX)";
+	const auto filename = create_temporary_dbc_with(dbc_contents.c_str());
+
+	Libdbc::DbcParser p;
+	p.parse_file(filename.c_str());
+
+	std::vector<uint8_t> data(8, 0xFF);
+	std::vector<double> out_values;
+	REQUIRE(p.parse_message(1, data, out_values) == Libdbc::Message::ParseSignalsStatus::Success);
+	REQUIRE(out_values.size() == 1);
+	REQUIRE(Catch::Approx(out_values.at(0)) == -1.0);
+}
+
+TEST_CASE("Parse Message single bit signals, both boolean states") {
+	std::string dbc_contents = PRIMITIVE_DBC + R"(BO_ 1 MSG1: 1 Vector__XXX
+ SG_ Flag : 0|1@1+ (1,0) [0|0] "" Vector__XXX)";
+	const auto filename = create_temporary_dbc_with(dbc_contents.c_str());
+
+	Libdbc::DbcParser p;
+	p.parse_file(filename.c_str());
+
+	std::vector<double> out_values;
+
+	REQUIRE(p.parse_message(1, std::vector<uint8_t>{0x00}, out_values) == Libdbc::Message::ParseSignalsStatus::Success);
+	REQUIRE(Catch::Approx(out_values.at(0)) == 0.0);
+
+	REQUIRE(p.parse_message(1, std::vector<uint8_t>{0x01}, out_values) == Libdbc::Message::ParseSignalsStatus::Success);
+	REQUIRE(Catch::Approx(out_values.at(0)) == 1.0);
+}
+
+TEST_CASE("Parse Message single bit signed signal treats set bit as -1") {
+	std::string dbc_contents = PRIMITIVE_DBC + R"(BO_ 1 MSG1: 1 Vector__XXX
+ SG_ Flag : 0|1@1- (1,0) [0|0] "" Vector__XXX)";
+	const auto filename = create_temporary_dbc_with(dbc_contents.c_str());
+
+	Libdbc::DbcParser p;
+	p.parse_file(filename.c_str());
+
+	std::vector<double> out_values;
+	REQUIRE(p.parse_message(1, std::vector<uint8_t>{0x01}, out_values) == Libdbc::Message::ParseSignalsStatus::Success);
+	REQUIRE(Catch::Approx(out_values.at(0)) == -1.0);
+}
+
+TEST_CASE("Parse Message with data shorter than the DBC declared size still succeeds for signals that fit") {
+	std::string dbc_contents = PRIMITIVE_DBC + R"(BO_ 234 MSG1: 8 Vector__XXX
+ SG_ Fits : 0|8@1+ (2,10) [0|0] "" Vector__XXX
+ SG_ TooFarLittleEndian : 16|16@1+ (2,100) [0|0] "" Vector__XXX)";
+	const auto filename = create_temporary_dbc_with(dbc_contents.c_str());
+
+	Libdbc::DbcParser p;
+	p.parse_file(filename.c_str());
+
+	// Only 2 bytes supplied though the message is declared as 8 bytes wide.
+	std::vector<uint8_t> data{0x05, 0x00};
+	std::vector<double> out_values;
+	REQUIRE(p.parse_message(234, data, out_values) == Libdbc::Message::ParseSignalsStatus::Success);
+	REQUIRE(out_values.size() == 2);
+	REQUIRE(Catch::Approx(out_values.at(0)) == 20.0); // 0x05 * 2 + 10
+
+	// Characterizes current behavior: a little-endian signal that doesn't fit within the
+	// supplied data is reported as a flat 0.0, bypassing factor/offset entirely.
+	REQUIRE(Catch::Approx(out_values.at(1)) == 0.0);
+}
+
+TEST_CASE("Parse Message CAN FD sized message (64 bytes) with signals across the full payload") {
+	// Classic CAN caps a message at 8 bytes; CAN FD allows up to 64. The DBC BO_ size
+	// field and parse_message's data buffer both need to support the full range.
+	std::string dbc_contents = PRIMITIVE_DBC + R"(BO_ 1 MSG_FD: 64 Vector__XXX
+ SG_ FirstByte : 0|8@1+ (1,0) [0|0] "" Vector__XXX
+ SG_ MidByte : 256|8@1+ (1,0) [0|0] "" Vector__XXX
+ SG_ LastByteLittleEndian : 504|8@1+ (1,0) [0|0] "" Vector__XXX
+ SG_ LastByteBigEndian : 511|8@0+ (1,0) [0|0] "" Vector__XXX
+ SG_ LastBitLittleEndian : 511|1@1+ (1,0) [0|0] "" Vector__XXX)";
+	const auto filename = create_temporary_dbc_with(dbc_contents.c_str());
+
+	Libdbc::DbcParser p;
+	p.parse_file(filename.c_str());
+
+	REQUIRE(p.get_messages().size() == 1);
+	REQUIRE(p.get_messages().at(0).size() == 64);
+
+	std::vector<uint8_t> data(64, 0);
+	data[0] = 0xAB;  // FirstByte
+	data[32] = 0xCD; // MidByte, byte 32 == bit 256
+	data[63] = 0x81; // LastByte*/LastBit*, top and bottom bits set
+
+	std::vector<double> out_values;
+	REQUIRE(p.parse_message(1, data, out_values) == Libdbc::Message::ParseSignalsStatus::Success);
+	REQUIRE(out_values.size() == 5);
+	REQUIRE(Catch::Approx(out_values.at(0)) == 0xAB);
+	REQUIRE(Catch::Approx(out_values.at(1)) == 0xCD);
+	REQUIRE(Catch::Approx(out_values.at(2)) == 0x81);
+	REQUIRE(Catch::Approx(out_values.at(3)) == 0x81);
+	REQUIRE(Catch::Approx(out_values.at(4)) == 1);
+}
+
+TEST_CASE("Parse Message with an intermediate CAN FD DLC size (32 bytes)") {
+	// CAN FD frames only take specific DLC-mapped sizes (0-8, 12, 16, 20, 24, 32, 48, 64);
+	// this exercises one of the non-8, non-64 sizes to make sure nothing assumes 8 or 64.
+	std::string dbc_contents = PRIMITIVE_DBC + R"(BO_ 2 MSG32: 32 Vector__XXX
+ SG_ Last : 248|8@1+ (2,5) [0|0] "" Vector__XXX)";
+	const auto filename = create_temporary_dbc_with(dbc_contents.c_str());
+
+	Libdbc::DbcParser p;
+	p.parse_file(filename.c_str());
+
+	REQUIRE(p.get_messages().at(0).size() == 32);
+
+	std::vector<uint8_t> data(32, 0);
+	data[31] = 10;
+	std::vector<double> out_values;
+	REQUIRE(p.parse_message(2, data, out_values) == Libdbc::Message::ParseSignalsStatus::Success);
+	REQUIRE(out_values.size() == 1);
+	REQUIRE(Catch::Approx(out_values.at(0)) == 25.0); // 10 * 2 + 5
+}
+
 TEST_CASE("Parse signal with SG_ on single line should fail.") {
 	std::string dbc_contents = PRIMITIVE_DBC + R"(BO_ 234 MSG1: 8 Vector__XXX
  SG_

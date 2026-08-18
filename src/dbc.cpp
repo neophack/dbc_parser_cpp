@@ -45,6 +45,12 @@ constexpr unsigned SIGNAL_MAX_GROUP = 13;
 constexpr unsigned SIGNAL_UNIT_GROUP = 15;
 constexpr unsigned SIGNAL_RECIEVER_GROUP = 16;
 
+// std::regex on libstdc++ backtracks recursively; an unmatched line with a long run of
+// word characters can recurse deep enough to overflow the stack. No legitimate DBC line
+// approaches this length, so lines beyond it are treated as unparseable without ever
+// reaching the regex engine.
+constexpr size_t MAX_MATCHABLE_LINE_LENGTH = 1000;
+
 constexpr unsigned MESSAGE_ID_GROUP = 2;
 constexpr unsigned MESSAGE_NAME_GROUP = 3;
 constexpr unsigned MESSAGE_SIZE_GROUP = 4;
@@ -140,11 +146,8 @@ void DbcParser::parse_dbc_header(std::istream& file_stream) {
 	std::string line;
 	std::smatch match;
 
-	while (Utils::StreamHandler::get_line(file_stream, line)) {
-		if (std::regex_search(line, match, version_re)) {
-			break;
-		}
-	}
+	Utils::StreamHandler::get_line(file_stream, line);
+	std::regex_search(line, match, version_re);
 
 	if (match.empty()) {
 		throw DbcFileIsMissingVersion(line);
@@ -185,6 +188,11 @@ void DbcParser::parse_dbc_messages(const std::vector<std::string>& lines) {
 	std::vector<Value> signal_value;
 
 	for (const auto& line : lines) {
+		if (line.length() > MAX_MATCHABLE_LINE_LENGTH) {
+			missed_lines.push_back(line);
+			continue;
+		}
+
 		if (std::regex_search(line, match, message_re)) {
 			uint32_t message_id = static_cast<uint32_t>(std::stoul(match.str(MESSAGE_ID_GROUP)));
 			std::string name = match.str(MESSAGE_NAME_GROUP);

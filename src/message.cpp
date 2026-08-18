@@ -25,6 +25,14 @@ Message::Message(uint32_t message_id, const std::string& name, uint8_t size, con
 bool Message::operator==(const Message& rhs) const {
 	return (m_id == rhs.id()) && (m_name == rhs.m_name) && (m_size == rhs.m_size) && (m_node == rhs.m_node);
 }
+namespace {
+// Returns a mask with the low `bits` bits set. Shifting a 64-bit value by 64
+// is undefined behavior, so the full-width case is handled explicitly.
+uint64_t low_bits_mask(uint32_t bits) {
+    return bits >= 64 ? ~0ULL : ((1ULL << bits) - 1);
+}
+}
+
 Message::ParseSignalsStatus Message::parse_signals(const std::vector<uint8_t>& data, std::vector<double>& values) const {
     const size_t size = data.size();
     if (size > 64) {
@@ -76,14 +84,16 @@ Message::ParseSignalsStatus Message::parse_signals(const std::vector<uint8_t>& d
             // Fast path for Intel
             uint32_t start_byte = bit_pos / 8;
             uint32_t end_byte = (bit_pos + signal.size - 1) / 8;
-            
-            if (end_byte < size) {
+            uint32_t bytes_to_read = end_byte - start_byte + 1;
+
+            // The bytes are accumulated into a 64-bit temporary, so this fast path only
+            // works when the signal (plus its sub-byte bit offset) fits within 8 bytes.
+            if (end_byte < size && bytes_to_read <= 8) {
                 uint64_t temp = 0;
-                int bytes_to_read = end_byte - start_byte + 1;
-                for (int i = 0; i < bytes_to_read; ++i) {
+                for (uint32_t i = 0; i < bytes_to_read; ++i) {
                     temp |= static_cast<uint64_t>(data[start_byte + i]) << (i * 8);
                 }
-                raw_value = (temp >> (bit_pos % 8)) & ((1ULL << signal.size) - 1);
+                raw_value = (temp >> (bit_pos % 8)) & low_bits_mask(signal.size);
             } else {
                 // Fallback (should not happen with the check above)
                 for (uint32_t i = 0; i < signal.size; ++i) {
@@ -99,7 +109,7 @@ Message::ParseSignalsStatus Message::parse_signals(const std::vector<uint8_t>& d
         // Apply sign extension
         double final_value;
         if (signal.is_signed && (raw_value & (1ULL << (signal.size - 1)))) {
-            int64_t signed_value = static_cast<int64_t>(raw_value | ~((1ULL << signal.size) - 1));
+            int64_t signed_value = static_cast<int64_t>(raw_value | ~low_bits_mask(signal.size));
             final_value = static_cast<double>(signed_value) * signal.factor + signal.offset;
         } else {
             final_value = static_cast<double>(raw_value) * signal.factor + signal.offset;
@@ -142,7 +152,7 @@ void Message::add_value_description(const std::string& signal_name, const std::v
 std::ostream& operator<<(std::ostream& out, const Message& msg) {
 	out << "Message: {id: " << msg.id() << ", ";
 	out << "name: " << msg.m_name << ", ";
-	out << "size: " << msg.m_size << ", ";
+	out << "size: " << static_cast<unsigned>(msg.m_size) << ", ";
 	out << "node: " << msg.m_node << "}";
 	return out;
 }

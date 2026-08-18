@@ -33,8 +33,8 @@ Signal::Signal(std::string name,
 
 bool Signal::operator==(const Signal& rhs) const {
 	return (this->name == rhs.name) && (this->is_multiplexed == rhs.is_multiplexed) && (this->start_bit == rhs.start_bit) && (this->size == rhs.size)
-		&& (this->is_bigendian == rhs.is_bigendian) && (this->is_signed == rhs.is_signed) && (this->offset == rhs.offset) && (this->min == rhs.min)
-		&& (this->max == rhs.max) && (this->unit == rhs.unit) && (this->receivers == rhs.receivers);
+		&& (this->is_bigendian == rhs.is_bigendian) && (this->is_signed == rhs.is_signed) && (this->factor == rhs.factor) && (this->offset == rhs.offset)
+		&& (this->min == rhs.min) && (this->max == rhs.max) && (this->unit == rhs.unit) && (this->receivers == rhs.receivers);
 }
 
 bool Signal::operator<(const Signal& rhs) const {

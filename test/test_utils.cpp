@@ -1,4 +1,5 @@
 #include "testing_utils/defines.hpp"
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <fstream>
 #include <libdbc/utils/utils.hpp>
@@ -90,6 +91,56 @@ TEST_CASE("Test string split feature", "[string]") {
 	String::split(s, v);
 
 	REQUIRE(v == vs);
+}
+
+TEST_CASE("String trim of an all whitespace string returns empty", "[string]") {
+	REQUIRE(String::trim("   \t\r\n  ") == "");
+}
+
+TEST_CASE("String trim of an empty string returns empty", "[string]") {
+	REQUIRE(String::trim("") == "");
+}
+
+TEST_CASE("String trim with no surrounding whitespace is unchanged", "[string]") {
+	REQUIRE(String::trim("abc") == "abc");
+}
+
+TEST_CASE("String split with a custom delimiter", "[string]") {
+	std::string s = "a,b,c";
+	std::vector<std::string> expected = {"a", "b", "c"};
+	std::vector<std::string> v;
+
+	String::split(s, v, ',');
+
+	REQUIRE(v == expected);
+}
+
+TEST_CASE("String split of an empty string produces no tokens", "[string]") {
+	std::string s;
+	std::vector<std::string> v;
+
+	String::split(s, v);
+
+	REQUIRE(v.empty());
+}
+
+TEST_CASE("convert_to_double parses well formed numbers", "[string][conversion]") {
+	REQUIRE(String::convert_to_double("-12.5") == Catch::Approx(-12.5));
+	REQUIRE(String::convert_to_double("0.5") == Catch::Approx(0.5));
+	REQUIRE(String::convert_to_double(".5") == Catch::Approx(0.5));
+	REQUIRE(String::convert_to_double("5.") == Catch::Approx(5.0));
+	REQUIRE(String::convert_to_double("100") == Catch::Approx(100.0));
+}
+
+TEST_CASE("convert_to_double falls back to the default value on invalid input", "[string][conversion]") {
+	REQUIRE(String::convert_to_double("") == Catch::Approx(0.0));
+	REQUIRE(String::convert_to_double("", 5.0) == Catch::Approx(5.0));
+	REQUIRE(String::convert_to_double("not_a_number", 7.0) == Catch::Approx(7.0));
+}
+
+TEST_CASE("convert_to_double parses the leading number of a partially valid string", "[string][conversion]") {
+	// fast_float parses as much of a valid prefix as it can, mirroring std::from_chars.
+	REQUIRE(String::convert_to_double("12abc", 9.0) == Catch::Approx(12.0));
 }
 
 } // Utils

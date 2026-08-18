@@ -309,3 +309,38 @@ BO_ have a issue here:
 	// We could match them all here but i think just a check that the size is sufficent.
 	REQUIRE(unused.size() == 3);
 }
+
+TEST_CASE("Parsing a complex real world style dbc file", "[dbc][parsing]") {
+	auto parser = std::unique_ptr<Libdbc::DbcParser>(new Libdbc::DbcParser());
+
+	REQUIRE_NOTHROW(parser->parse_file(COMPLEX_DBC_FILE));
+
+	REQUIRE(parser->get_version() == "");
+	REQUIRE(parser->get_nodes() == std::vector<std::string>{"DBG", "DRIVER", "IO", "MOTOR", "SENSOR"});
+
+	auto messages = parser->get_messages();
+	REQUIRE(messages.size() == 5);
+
+	const auto* heartbeat = parser->get_message_by_id(100);
+	REQUIRE(heartbeat != nullptr);
+	REQUIRE(heartbeat->name() == "DRIVER_HEARTBEAT");
+	REQUIRE(heartbeat->get_signals().size() == 1);
+	REQUIRE(heartbeat->get_signals().at(0).value_descriptions.size() == 3);
+
+	const auto* io_debug = parser->get_message_by_id(500);
+	REQUIRE(io_debug != nullptr);
+	REQUIRE(io_debug->get_signals().size() == 4);
+
+	// SENSOR_SONARS uses multiplexed signals (mux markers "M"/"m0"/"m1"), which this parser
+	// does not currently support: those SG_ lines fail to match and are dropped. Only the
+	// one signal that happens to omit the multiplex marker is picked up.
+	const auto* sonars = parser->get_message_by_id(200);
+	REQUIRE(sonars != nullptr);
+	REQUIRE(sonars->name() == "SENSOR_SONARS");
+	REQUIRE(sonars->get_signals().size() == 1);
+	REQUIRE(sonars->get_signals().at(0).name == "SENSOR_SONARS_err_count");
+
+	// CM_, BA_, BA_DEF_ and friends aren't parsed, so they're reported as unused, along
+	// with the 9 multiplexed SG_ lines belonging to SENSOR_SONARS.
+	REQUIRE(parser->unused_lines().size() == 26);
+}

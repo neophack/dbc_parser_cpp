@@ -29,6 +29,8 @@ add_executable(dbcParserTests
 	test_dbc.cpp
 	test_utils.cpp
 	test_parse_message.cpp
+	test_message_signal.cpp
+	test_performance.cpp
 	testing_utils/common.cpp
 )
 

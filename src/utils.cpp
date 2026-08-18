@@ -2,10 +2,18 @@
 #include <fast_float/fast_float.h>
 #include <istream>
 #include <libdbc/utils/utils.hpp>
-#include <regex>
 #include <string>
 
 namespace Utils {
+
+namespace {
+// A regex such as "\s*(.*)" was previously used to test for blank-ness, but std::regex's
+// recursive backtracking can stack-overflow on very long lines. A plain scan has no such
+// limit and is what the regex was actually checking for.
+bool has_non_whitespace(const std::string& line) {
+	return line.find_first_not_of(" \t\n\v\f\r") != std::string::npos;
+}
+}
 
 std::istream& StreamHandler::get_line(std::istream& stream, std::string& line) {
 	std::string newline;
@@ -28,18 +36,11 @@ std::istream& StreamHandler::get_line(std::istream& stream, std::string& line) {
 std::istream& StreamHandler::get_next_non_blank_line(std::istream& stream, std::string& line) {
 	bool is_blank = true;
 
-	const std::regex whitespace_re("\\s*(.*)");
-	std::smatch match;
-
 	while (is_blank) {
 		Utils::StreamHandler::get_line(stream, line);
 
-		std::regex_search(line, match, whitespace_re);
-
-		if ((!line.empty() && !match.empty()) || (stream.eof())) {
-			if ((match.length(1) > 0) || (stream.eof())) {
-				is_blank = false;
-			}
+		if (has_non_whitespace(line) || stream.eof()) {
+			is_blank = false;
 		}
 	}
 
@@ -49,15 +50,10 @@ std::istream& StreamHandler::get_next_non_blank_line(std::istream& stream, std::
 std::istream& StreamHandler::skip_to_next_blank_line(std::istream& stream, std::string& line) {
 	bool line_is_empty = false;
 
-	const std::regex whitespace_re("\\s*(.*)");
-	std::smatch match;
-
 	while (!line_is_empty) {
 		Utils::StreamHandler::get_line(stream, line);
 
-		std::regex_search(line, match, whitespace_re);
-
-		if ((match.length(1) == 0) || (stream.eof())) {
+		if (!has_non_whitespace(line) || stream.eof()) {
 			line_is_empty = true;
 		}
 	}

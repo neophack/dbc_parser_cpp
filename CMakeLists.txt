@@ -45,10 +45,10 @@ list(APPEND HEADER_FILES
   ${PROJECT_SOURCE_DIR}/include/libdbc/exceptions/error.hpp
 )
 
-#if(DBC_ENABLE_TESTS)
-#	include(CTest)
-#	add_subdirectory(test)
-#endif()
+if(DBC_ENABLE_TESTS)
+	include(CTest)
+	add_subdirectory(test)
+endif()
 
 if(DBC_GENERATE_DOCS)
 	add_subdirectory(doc)
