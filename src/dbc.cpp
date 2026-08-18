@@ -12,7 +12,41 @@
 #include <string>
 #include <vector>
 
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
 namespace Libdbc {
+
+#ifdef _WIN32
+// std::ifstream(const char*) on Windows converts the path through the
+// process's current ANSI code page, not UTF-8. file_name is expected to be
+// UTF-8 encoded (as it is everywhere else this library runs), so a path
+// containing e.g. Chinese characters would silently get mangled into a
+// nonexistent path and fail to open. Converting to UTF-16 ourselves and
+// opening with the (non-standard, but widely supported) wchar_t* overload
+// avoids that.
+static std::wstring utf8_path_to_wide(const std::string& utf8) {
+	if (utf8.empty()) {
+		return std::wstring();
+	}
+
+	int size = MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(), static_cast<int>(utf8.size()), nullptr, 0);
+	if (size <= 0) {
+		return std::wstring();
+	}
+
+	std::wstring wide(static_cast<size_t>(size), L'\0');
+	MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(), static_cast<int>(utf8.size()), &wide[0], size);
+	return wide;
+}
+#endif
 
 const auto floatPattern = "(-?\\d+\\.?(\\d+)?)"; // Can be negative
 
@@ -121,7 +155,11 @@ void DbcParser::parse_file(const std::string& file_name) {
 		throw NonDbcFileFormatError(file_name, extension);
 	}
 
+#ifdef _WIN32
+	std::ifstream stream(utf8_path_to_wide(file_name).c_str());
+#else
 	std::ifstream stream(file_name.c_str());
+#endif
 	if (!stream.is_open()) {
 		throw DbcFileCouldNotBeOpened(file_name);
 	}
@@ -170,7 +208,14 @@ void DbcParser::parse_dbc_header(std::istream& file_stream) {
 	std::string line;
 	std::smatch match;
 
-	Utils::StreamHandler::get_line(file_stream, line);
+	// Some DBC exporters (e.g. Vector CANdb++ / Mentor Graphics) prepend a
+	// "// ..." comment banner before the VERSION line. That's not part of
+	// the DBC grammar, but skip it (and any blank lines) rather than
+	// failing outright, since these files are otherwise well-formed.
+	do {
+		Utils::StreamHandler::get_line(file_stream, line);
+	} while (!file_stream.eof() && (line.empty() || Utils::String::trim(line).rfind("//", 0) == 0));
+
 	std::regex_search(line, match, version_re);
 
 	if (match.empty()) {
@@ -249,7 +294,13 @@ void DbcParser::parse_dbc_messages(const std::vector<std::string>& lines) {
 			uint32_t start_bit = static_cast<uint32_t>(to_uint(match.str(SIGNAL_START_BIT_GROUP), line, "signal start bit"));
 			uint32_t size = static_cast<uint32_t>(to_uint(match.str(SIGNAL_SIZE_GROUP), line, "signal size"));
 			if (size < 1 || size > 64) {
-				throw DbcFileParseError(line, "Signal \"" + name + "\" has an unsupported bit size (" + std::to_string(size) + "); expected 1 to 64.");
+				// Some vendor exports (e.g. raw BLE/UWB payload messages) use a
+				// single signal spanning the whole message as an undissected
+				// blob, well past the 64 bits this library can decode into a
+				// double. Skip just that signal instead of failing the whole
+				// file, consistent with the MAX_MATCHABLE_LINE_LENGTH skip above.
+				missed_lines.push_back(line);
+				continue;
 			}
 			bool is_bigendian = (to_uint(match.str(SIGNAL_ENDIAN_GROUP), line, "signal byte order") == 0);
 			bool is_signed = (match.str(SIGNAL_SIGNED_GROUP) == "-");

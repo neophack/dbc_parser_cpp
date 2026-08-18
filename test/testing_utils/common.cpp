@@ -26,13 +26,7 @@ std::string generate_unique_filename() {
 	return "temp_file_" + std::to_string(milliseconds) + "_" + std::to_string(random_num) + ".dbc";
 }
 
-std::string create_temporary_dbc_with(const char* contents) {
-	std::filesystem::path temp_dir = std::filesystem::temp_directory_path();
-
-	// Generate a unique temporary file name
-	std::string filename = generate_unique_filename();
-	std::filesystem::path temp_file = temp_dir / filename;
-
+static std::string write_dbc_to(const std::filesystem::path& temp_file, const char* contents) {
 	std::ofstream file(temp_file);
 	if (!file.is_open()) {
 		throw std::runtime_error("Failed to create temporary file.");
@@ -41,5 +35,29 @@ std::string create_temporary_dbc_with(const char* contents) {
 	file << contents << std::endl;
 	file.close();
 
-	return temp_file.string();
+	// Use u8string() rather than string() so the returned path stays UTF-8
+	// encoded on every platform. On Windows, string() would instead go
+	// through the current ANSI code page and mangle non-ASCII characters.
+	return temp_file.u8string();
+}
+
+std::string create_temporary_dbc_with(const char* contents) {
+	std::filesystem::path temp_dir = std::filesystem::temp_directory_path();
+
+	// Generate a unique temporary file name
+	std::string filename = generate_unique_filename();
+	std::filesystem::path temp_file = temp_dir / filename;
+
+	return write_dbc_to(temp_file, contents);
+}
+
+std::string create_temporary_dbc_in_dir_with(const std::string& dir_name_utf8, const char* contents) {
+	std::filesystem::path temp_dir = std::filesystem::temp_directory_path();
+	std::filesystem::path sub_dir = temp_dir / std::filesystem::u8path(dir_name_utf8);
+	std::filesystem::create_directories(sub_dir);
+
+	std::string filename = generate_unique_filename();
+	std::filesystem::path temp_file = sub_dir / filename;
+
+	return write_dbc_to(temp_file, contents);
 }
