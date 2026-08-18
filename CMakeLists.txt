@@ -97,6 +97,13 @@ add_library(${PROJECT_NAME} STATIC ${SOURCE_FILES})
 # fast_float is header-only and only used in dbc's sources (not in its public
 # headers), so link it privately to keep the installed target dependency-free.
 target_link_libraries(${PROJECT_NAME} PRIVATE FastFloat::fast_float)
+# Re-add fast_float's include dir as a SYSTEM include so compiler warnings and
+# clang-tidy's static analyzer (which skips system headers by default) don't
+# flag issues in third-party code we don't control.
+get_target_property(FASTFLOAT_INTERFACE_INCLUDE_DIRS FastFloat::fast_float INTERFACE_INCLUDE_DIRECTORIES)
+if(FASTFLOAT_INTERFACE_INCLUDE_DIRS)
+	target_include_directories(${PROJECT_NAME} SYSTEM PRIVATE ${FASTFLOAT_INTERFACE_INCLUDE_DIRS})
+endif()
 target_include_directories(${PROJECT_NAME} PUBLIC
 	$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
 	$<INSTALL_INTERFACE:include>
