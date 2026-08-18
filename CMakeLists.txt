@@ -108,9 +108,10 @@ target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_11)
 target_sources(${PROJECT_NAME} PRIVATE ${HEADER_FILES})
 
 if(DBC_GENERATE_SINGLE_HEADER)
+	find_program(BASH_PROGRAM bash)
 	add_custom_target(single_header ALL
 						WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-						COMMAND ${CMAKE_SOURCE_DIR}/scripts/create_single_header.sh
+						COMMAND ${BASH_PROGRAM} ${CMAKE_SOURCE_DIR}/scripts/create_single_header.sh
 	)
 endif()
 
