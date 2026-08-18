@@ -41,6 +41,10 @@ public:
 	}
 
 	static double convert_to_double(const std::string& value, double default_value = 0);
+
+	// Converts `value` to a double, locale independently. Returns false (without
+	// touching `result`) if the string is not a valid floating point number.
+	static bool try_convert_to_double(const std::string& value, double& result);
 };
 
 }

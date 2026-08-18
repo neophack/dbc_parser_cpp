@@ -206,6 +206,42 @@ TEST_CASE("get_message_by_id returns the message for a known id, nullptr otherwi
 	REQUIRE(p.get_message_by_id(999) == nullptr);
 }
 
+TEST_CASE("Parse Message with a signal outside the data bounds returns ErrorSignalOutOfBounds") {
+	std::string dbc_contents = PRIMITIVE_DBC + R"(BO_ 234 MSG1: 8 Vector__XXX
+ SG_ Msg1Sig1 : 0|8@1+ (1,0) [0|0] "" Vector__XXX)";
+	const auto filename = create_temporary_dbc_with(dbc_contents.c_str());
+
+	Libdbc::DbcParser p;
+	p.parse_file(filename);
+
+	// Signal spans bits 0..7 and one byte is supplied, so it fits.
+	std::vector<uint8_t> short_data{0x00};
+	std::vector<double> out_values;
+	REQUIRE(p.parse_message(234, short_data, out_values) == Libdbc::Message::ParseSignalsStatus::Success);
+
+	SECTION("Little endian signal that does not fit the data returns an error") {
+		std::string inner_dbc = PRIMITIVE_DBC + R"(BO_ 234 MSG1: 8 Vector__XXX
+ SG_ Msg1Sig1 : 56|16@1+ (1,0) [0|0] "" Vector__XXX)";
+		const auto inner_filename = create_temporary_dbc_with(inner_dbc.c_str());
+		Libdbc::DbcParser p2;
+		p2.parse_file(inner_filename);
+
+		std::vector<uint8_t> one_byte{0xFF};
+		REQUIRE(p2.parse_message(234, one_byte, out_values) == Libdbc::Message::ParseSignalsStatus::ErrorSignalOutOfBounds);
+	}
+
+	SECTION("Big endian signal that does not fit the data returns an error") {
+		std::string inner_dbc = PRIMITIVE_DBC + R"(BO_ 234 MSG1: 8 Vector__XXX
+ SG_ Msg1Sig1 : 71|16@0+ (1,0) [0|0] "" Vector__XXX)";
+		const auto inner_filename = create_temporary_dbc_with(inner_dbc.c_str());
+		Libdbc::DbcParser p2;
+		p2.parse_file(inner_filename);
+
+		std::vector<uint8_t> one_byte{0xFF};
+		REQUIRE(p2.parse_message(234, one_byte, out_values) == Libdbc::Message::ParseSignalsStatus::ErrorSignalOutOfBounds);
+	}
+}
+
 TEST_CASE("Parse Message data larger than 64 bytes returns ErrorMessageToLong") {
 	std::string dbc_contents = PRIMITIVE_DBC + R"(BO_ 234 MSG1: 8 Vector__XXX
  SG_ Msg1Sig1 : 0|8@0+ (1,0) [0|0] "" Vector__XXX)";
@@ -235,6 +271,70 @@ TEST_CASE("Parse Message full 64 bit wide signal, little endian") {
 	REQUIRE(p.parse_message(1, data, out_values) == Libdbc::Message::ParseSignalsStatus::Success);
 	REQUIRE(out_values.size() == 1);
 	REQUIRE(Catch::Approx(out_values.at(0)) == 18446744073709551615.0);
+}
+
+TEST_CASE("Parse Message 64 bit signal with sub-byte offset spanning 9 bytes, little endian") {
+	// start_bit 4 + 64 bits covers bits 4..67, i.e. 9 bytes of payload. The Intel
+	// fast path accumulates bytes into a 64-bit temporary, so this crossing must
+	// still extract the high bits that live past the first 8 bytes.
+	std::string dbc_contents = PRIMITIVE_DBC + R"(BO_ 1 MSG1: 16 Vector__XXX
+ SG_ Offset64 : 4|64@1+ (1,0) [0|0] "" Vector__XXX)";
+	const auto filename = create_temporary_dbc_with(dbc_contents.c_str());
+
+	Libdbc::DbcParser p;
+	p.parse_file(filename.c_str());
+
+	SECTION("All covered bits set yields the maximum 64 bit value") {
+		std::vector<uint8_t> data(9, 0xFF);
+		std::vector<double> out_values;
+		REQUIRE(p.parse_message(1, data, out_values) == Libdbc::Message::ParseSignalsStatus::Success);
+		REQUIRE(out_values.size() == 1);
+		REQUIRE(Catch::Approx(out_values.at(0)) == 18446744073709551615.0);
+	}
+
+	SECTION("Only the highest covered bits are set") {
+		// Bits 67..64 live in byte 8, beyond the 8 bytes the fast path temporary holds.
+		std::vector<uint8_t> data(9, 0);
+		data[8] = 0x0F; // payload bits 67..64 -> raw bits 63..60
+		std::vector<double> out_values;
+		REQUIRE(p.parse_message(1, data, out_values) == Libdbc::Message::ParseSignalsStatus::Success);
+		REQUIRE(out_values.size() == 1);
+		REQUIRE(Catch::Approx(out_values.at(0)) == 17293822569102704640.0); // 0xF << 60
+	}
+
+	SECTION("Only the lowest covered bit is set") {
+		std::vector<uint8_t> data(9, 0);
+		data[0] = 0x10; // bit 4 set
+		std::vector<double> out_values;
+		REQUIRE(p.parse_message(1, data, out_values) == Libdbc::Message::ParseSignalsStatus::Success);
+		REQUIRE(out_values.size() == 1);
+		REQUIRE(Catch::Approx(out_values.at(0)) == 1.0);
+	}
+}
+
+TEST_CASE("Parse Message 60 bit signal spanning 9 bytes, little endian") {
+	// start_bit 12 + 60 bits covers bits 12..71: bytes 1 through 9.
+	std::string dbc_contents = PRIMITIVE_DBC + R"(BO_ 1 MSG1: 16 Vector__XXX
+ SG_ Span60 : 12|60@1+ (1,0) [0|0] "" Vector__XXX)";
+	const auto filename = create_temporary_dbc_with(dbc_contents.c_str());
+
+	Libdbc::DbcParser p;
+	p.parse_file(filename.c_str());
+
+	std::vector<uint8_t> data = {0x00, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0xA8};
+	std::vector<double> out_values;
+	REQUIRE(p.parse_message(1, data, out_values) == Libdbc::Message::ParseSignalsStatus::Success);
+	REQUIRE(out_values.size() == 1);
+
+	// The signal covers payload bits 12..71: bytes at indices 1..8 read little
+	// endian, then shifted right by 4. data[9] is outside the signal and must be
+	// ignored.
+	uint64_t low = 0;
+	for (int i = 1; i <= 8; ++i) {
+		low |= static_cast<uint64_t>(data[i]) << ((i - 1) * 8);
+	}
+	const uint64_t expected = low >> 4;
+	REQUIRE(Catch::Approx(out_values.at(0)) == static_cast<double>(expected));
 }
 
 TEST_CASE("Parse Message full 64 bit wide signed signal, little endian, all bits set is -1") {
@@ -297,25 +397,29 @@ TEST_CASE("Parse Message single bit signed signal treats set bit as -1") {
 	REQUIRE(Catch::Approx(out_values.at(0)) == -1.0);
 }
 
-TEST_CASE("Parse Message with data shorter than the DBC declared size still succeeds for signals that fit") {
+TEST_CASE("Parse Message with data shorter than the DBC declared size") {
 	std::string dbc_contents = PRIMITIVE_DBC + R"(BO_ 234 MSG1: 8 Vector__XXX
- SG_ Fits : 0|8@1+ (2,10) [0|0] "" Vector__XXX
- SG_ TooFarLittleEndian : 16|16@1+ (2,100) [0|0] "" Vector__XXX)";
+ SG_ Fits : 0|8@1+ (2,10) [0|0] "" Vector__XXX)";
 	const auto filename = create_temporary_dbc_with(dbc_contents.c_str());
 
 	Libdbc::DbcParser p;
-	p.parse_file(filename.c_str());
+	p.parse_file(filename);
 
 	// Only 2 bytes supplied though the message is declared as 8 bytes wide.
 	std::vector<uint8_t> data{0x05, 0x00};
 	std::vector<double> out_values;
 	REQUIRE(p.parse_message(234, data, out_values) == Libdbc::Message::ParseSignalsStatus::Success);
-	REQUIRE(out_values.size() == 2);
+	REQUIRE(out_values.size() == 1);
 	REQUIRE(Catch::Approx(out_values.at(0)) == 20.0); // 0x05 * 2 + 10
 
-	// Characterizes current behavior: a little-endian signal that doesn't fit within the
-	// supplied data is reported as a flat 0.0, bypassing factor/offset entirely.
-	REQUIRE(Catch::Approx(out_values.at(1)) == 0.0);
+	// A little-endian signal that doesn't fit within the supplied data makes the
+	// whole parse fail instead of silently decoding a flat 0.0.
+	std::string oob_dbc = PRIMITIVE_DBC + R"(BO_ 234 MSG1: 8 Vector__XXX
+ SG_ TooFarLittleEndian : 16|16@1+ (2,100) [0|0] "" Vector__XXX)";
+	const auto oob_filename = create_temporary_dbc_with(oob_dbc.c_str());
+	Libdbc::DbcParser p2;
+	p2.parse_file(oob_filename);
+	REQUIRE(p2.parse_message(234, data, out_values) == Libdbc::Message::ParseSignalsStatus::ErrorSignalOutOfBounds);
 }
 
 TEST_CASE("Parse Message CAN FD sized message (64 bytes) with signals across the full payload") {

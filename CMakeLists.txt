@@ -5,12 +5,16 @@ project(dbc VERSION 0.5.0 DESCRIPTION "C++ DBC Parser")
 
 # -- PROJECT OPTIONS  -- #
 option(DBC_ENABLE_TESTS "Enable Unittests" ON)
+option(DBC_ENABLE_EXAMPLES "Build the example programs" ON)
 option(DBC_TEST_LOCALE_INDEPENDENCE "Used to deterime if the libary is locale agnostic when it comes to converting floats. You need `de_DE.UTF-8` locale installed for this testing." OFF)
 option(DBC_GENERATE_DOCS "Use doxygen if installed to generated documentation files" OFF)
 option(DBC_GENERATE_SINGLE_HEADER "This will run the generator for the single header file version. Default is OFF since we make a static build. Requires cargo installed." OFF)
 # ---------------------- #
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+# Standard install directories (CMAKE_INSTALL_LIBDIR / CMAKE_INSTALL_INCLUDEDIR / ...)
+include(GNUInstallDirs)
 
 # package
 set(CPACK_PACKAGE_VERSION_MAJOR ${PROJECT_VERSION_MAJOR})
@@ -26,7 +30,19 @@ set(CMAKE_CXX_STANDARD_REQUIRED True)
 
 find_package(FastFloat QUIET)
 if (NOT ${FastFloat_FOUND})
-	add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../fast_float ${CMAKE_CURRENT_BINARY_DIR}/fast_float)
+	if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/../fast_float)
+		# Sibling checkout of fast_float (repo-local convention)
+		add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../fast_float ${CMAKE_CURRENT_BINARY_DIR}/fast_float)
+	else()
+		# No local copy: fetch fast_float from upstream. Header-only, so this
+		# only costs download time and keeps the build self-contained.
+		include(FetchContent)
+		FetchContent_Declare(fast_float
+			GIT_REPOSITORY https://github.com/fastfloat/fast_float.git
+			GIT_TAG v7.0.0
+		)
+		FetchContent_MakeAvailable(fast_float)
+	endif()
 endif()
 
 # add where to find the source files
@@ -48,6 +64,10 @@ list(APPEND HEADER_FILES
 if(DBC_ENABLE_TESTS)
 	include(CTest)
 	add_subdirectory(test)
+endif()
+
+if(DBC_ENABLE_EXAMPLES)
+	add_subdirectory(examples)
 endif()
 
 if(DBC_GENERATE_DOCS)
@@ -74,14 +94,18 @@ else()
 endif()
 
 add_library(${PROJECT_NAME} STATIC ${SOURCE_FILES})
-target_link_libraries(${PROJECT_NAME} FastFloat::fast_float)
+# fast_float is header-only and only used in dbc's sources (not in its public
+# headers), so link it privately to keep the installed target dependency-free.
+target_link_libraries(${PROJECT_NAME} PRIVATE FastFloat::fast_float)
 target_include_directories(${PROJECT_NAME} PUBLIC
 	$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
 	$<INSTALL_INTERFACE:include>
 )
 target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_11)
 
-target_sources(${PROJECT_NAME} INTERFACE ${HEADER_FILES})
+# List the headers as private sources (for IDEs / clang-tidy). They must not be
+# INTERFACE sources: installed targets cannot reference source-dir paths.
+target_sources(${PROJECT_NAME} PRIVATE ${HEADER_FILES})
 
 if(DBC_GENERATE_SINGLE_HEADER)
 	add_custom_target(single_header ALL
@@ -91,9 +115,14 @@ if(DBC_GENERATE_SINGLE_HEADER)
 endif()
 
 ## Installation
-# install lib
+include(CMakePackageConfigHelpers)
+
+# install lib + export for find_package(dbc)
 install(TARGETS ${PROJECT_NAME}
-		DESTINATION ${CMAKE_INSTALL_LIBDIR})
+	EXPORT dbcTargets
+	ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+	LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+	RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
 # install headers
 install(DIRECTORY ${PROJECT_SOURCE_DIR}/include/libdbc DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
@@ -103,6 +132,26 @@ configure_file(${PROJECT_NAME}.pc.in ${PROJECT_NAME}.pc @ONLY)
 install(
 	FILES ${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}.pc
 	DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig)
+
+# CMake package config so consumers can use find_package(dbc)
+write_basic_package_version_file(
+	${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}ConfigVersion.cmake
+	VERSION ${PROJECT_VERSION}
+	COMPATIBILITY SameMajorVersion)
+
+configure_package_config_file(
+	${CMAKE_CURRENT_SOURCE_DIR}/cmake/${PROJECT_NAME}Config.cmake.in
+	${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}Config.cmake
+	INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/${PROJECT_NAME})
+
+install(FILES
+	${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}Config.cmake
+	${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}ConfigVersion.cmake
+	DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/${PROJECT_NAME})
+
+install(EXPORT dbcTargets
+	NAMESPACE Libdbc::
+	DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/${PROJECT_NAME})
 
 # Clang tidy
 add_custom_target(clang-tidy-check

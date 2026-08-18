@@ -32,7 +32,8 @@ Signal::Signal(std::string name,
 }
 
 bool Signal::operator==(const Signal& rhs) const {
-	return (this->name == rhs.name) && (this->is_multiplexed == rhs.is_multiplexed) && (this->start_bit == rhs.start_bit) && (this->size == rhs.size)
+	return (this->name == rhs.name) && (this->is_multiplexed == rhs.is_multiplexed) && (this->is_multiplexor == rhs.is_multiplexor)
+		&& (this->multiplex_value == rhs.multiplex_value) && (this->start_bit == rhs.start_bit) && (this->size == rhs.size)
 		&& (this->is_bigendian == rhs.is_bigendian) && (this->is_signed == rhs.is_signed) && (this->factor == rhs.factor) && (this->offset == rhs.offset)
 		&& (this->min == rhs.min) && (this->max == rhs.max) && (this->unit == rhs.unit) && (this->receivers == rhs.receivers);
 }
@@ -51,8 +52,11 @@ std::ostream& operator<<(std::ostream& out, const Signal& sig) {
 	out << "Min: " << sig.min << ", Max: " << sig.max << ", ";
 	out << "Unit: (" << sig.unit << "), ";
 	out << "receivers: ";
-	for (const auto& reciever : sig.receivers) {
-		out << reciever;
+	for (size_t i = 0; i < sig.receivers.size(); ++i) {
+		if (i > 0) {
+			out << ", ";
+		}
+		out << sig.receivers[i];
 	}
 	return out << "}";
 }

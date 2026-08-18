@@ -14,8 +14,15 @@ struct Signal {
 		std::string description;
 	};
 
+	// Multiplexing role of this signal:
+	//  - plain signal:  is_multiplexed == false, is_multiplexor == false
+	//  - multiplexor ("M" marker):  is_multiplexor == true
+	//  - multiplexed member ("m<N>" marker):  is_multiplexed == true,
+	//    active only when the multiplexor's raw value == multiplex_value
 	std::string name;
 	bool is_multiplexed;
+	bool is_multiplexor = false;
+	int32_t multiplex_value = -1;
 	uint32_t start_bit;
 	uint32_t size;
 	bool is_bigendian;
@@ -29,7 +36,7 @@ struct Signal {
 	std::vector<ValueDescription> value_descriptions;
 
 	Signal() = delete;
-	virtual ~Signal() = default;
+	~Signal() = default;
 	explicit Signal(std::string name,
 					bool is_multiplexed,
 					uint32_t start_bit,
@@ -43,7 +50,7 @@ struct Signal {
 					std::string unit,
 					std::vector<std::string> receivers);
 
-	virtual bool operator==(const Signal& rhs) const;
+	bool operator==(const Signal& rhs) const;
 	bool operator<(const Signal& rhs) const;
 };
 

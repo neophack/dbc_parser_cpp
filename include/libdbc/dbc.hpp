@@ -6,8 +6,8 @@
 #include <libdbc/message.hpp>
 #include <regex>
 #include <string>
-#include <vector>
 #include <unordered_map>
+#include <vector>
 
 namespace Libdbc {
 
@@ -17,8 +17,6 @@ public:
 
 	virtual void parse_file(const std::string& file) = 0;
 	virtual void parse_file(std::istream& file) = 0;
-
-protected:
 };
 
 class DbcParser : public Parser {
@@ -28,14 +26,14 @@ public:
 	void parse_file(const std::string& file_name) override;
 	void parse_file(std::istream& stream) override;
 
-	std::string get_version() const;
-	std::vector<std::string> get_nodes() const;
-	std::vector<Libdbc::Message> get_messages() const;
+	const std::string& get_version() const;
+	const std::vector<std::string>& get_nodes() const;
+	const std::vector<Libdbc::Message>& get_messages() const;
 	const Message* get_message_by_id(uint32_t message_id) const;
 
-	Message::ParseSignalsStatus parse_message(uint32_t message_id, const std::vector<uint8_t>& data, std::vector<double>& out_values);
+	Message::ParseSignalsStatus parse_message(uint32_t message_id, const std::vector<uint8_t>& data, std::vector<double>& out_values) const;
 
-	std::vector<std::string> unused_lines() const;
+	const std::vector<std::string>& unused_lines() const;
 
 private:
 	std::string version;

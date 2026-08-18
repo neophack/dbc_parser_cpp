@@ -1,5 +1,6 @@
 #include <cstddef>
 #include <fast_float/fast_float.h>
+#include <system_error>
 #include <istream>
 #include <libdbc/utils/utils.hpp>
 #include <string>
@@ -23,9 +24,6 @@ std::istream& StreamHandler::get_line(std::istream& stream, std::string& line) {
 	// Windows CRLF (\r\n)
 	if (!newline.empty() && newline[newline.size() - 1] == '\r') {
 		line = newline.substr(0, newline.size() - 1);
-		// MacOS LF (\r)
-	} else if (!newline.empty() && newline[newline.size()] == '\r') {
-		line = newline.replace(newline.size(), 1, "\n");
 	} else {
 		line = newline;
 	}
@@ -64,8 +62,11 @@ std::istream& StreamHandler::skip_to_next_blank_line(std::istream& stream, std::
 std::string String::trim(const std::string& line) {
 	const char* WhiteSpace = " \t\v\r\n";
 	std::size_t start = line.find_first_not_of(WhiteSpace);
+	if (start == std::string::npos) {
+		return std::string();
+	}
 	std::size_t end = line.find_last_not_of(WhiteSpace);
-	return start == end ? std::string() : line.substr(start, end - start + 1);
+	return line.substr(start, end - start + 1);
 }
 
 double String::convert_to_double(const std::string& value, double default_value) {
@@ -73,6 +74,16 @@ double String::convert_to_double(const std::string& value, double default_value)
 	// NOLINTNEXTLINE -- Trying to iterators on the value causes the test to infinitly hang on windows builds
 	fast_float::from_chars(value.data(), value.data() + value.size(), converted_value);
 	return converted_value;
+}
+
+bool String::try_convert_to_double(const std::string& value, double& result) {
+	double converted_value = 0;
+	const auto answer = fast_float::from_chars(value.data(), value.data() + value.size(), converted_value);
+	if (answer.ec != std::errc() || answer.ptr != value.data() + value.size()) {
+		return false;
+	}
+	result = converted_value;
+	return true;
 }
 
 } // Namespace Utils

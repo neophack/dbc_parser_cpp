@@ -103,6 +103,21 @@ TEST_CASE("String trim of an empty string returns empty", "[string]") {
 
 TEST_CASE("String trim with no surrounding whitespace is unchanged", "[string]") {
 	REQUIRE(String::trim("abc") == "abc");
+	REQUIRE(String::trim("a") == "a");
+}
+
+TEST_CASE("try_convert_to_double reports failures", "[string]") {
+	double result = -1.0;
+	REQUIRE(String::try_convert_to_double("3.25", result));
+	REQUIRE(result == 3.25);
+	REQUIRE(String::try_convert_to_double("-42", result));
+	REQUIRE(result == -42.0);
+	REQUIRE(String::try_convert_to_double("1e3", result));
+	REQUIRE(result == 1000.0);
+
+	REQUIRE_FALSE(String::try_convert_to_double("abc", result));
+	REQUIRE_FALSE(String::try_convert_to_double("1.5abc", result));
+	REQUIRE_FALSE(String::try_convert_to_double("", result));
 }
 
 TEST_CASE("String split with a custom delimiter", "[string]") {

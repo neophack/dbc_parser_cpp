@@ -107,6 +107,9 @@ TEST_CASE("A single very long malformed line does not crash or hang the parser",
 	REQUIRE_NOTHROW(parser.parse_file(filename.c_str()));
 	auto elapsed = std::chrono::steady_clock::now() - start;
 
+	// The line exceeds MAX_MATCHABLE_LINE_LENGTH, so it must be reported as unused
+	// rather than silently dropped or matched.
+	REQUIRE(parser.unused_lines().size() == 1);
 	REQUIRE(std::chrono::duration_cast<std::chrono::seconds>(elapsed).count() < 10);
 }
 

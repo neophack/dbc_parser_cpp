@@ -18,3 +18,4 @@ __pycache__/
 # -- Static Analyzers -- #
 .cache/
 
+build-ci/

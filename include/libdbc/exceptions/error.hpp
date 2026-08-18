@@ -35,6 +35,34 @@ private:
 	std::string error_msg;
 };
 
+class DbcFileCouldNotBeOpened : public Exception {
+public:
+	DbcFileCouldNotBeOpened(const std::string& path) {
+		error_msg = {"Cannot open dbc file for reading (" + path + "). Check that the file exists and is readable."};
+	}
+
+	const char* what() const throw() override {
+		return error_msg.c_str();
+	}
+
+private:
+	std::string error_msg;
+};
+
+class DbcFileParseError : public ValidityError {
+public:
+	DbcFileParseError(const std::string& line, const std::string& reason) {
+		error_msg = {"Invalid dbc file. " + reason + " Attempting to read line: (" + line + ")."};
+	}
+
+	const char* what() const throw() override {
+		return error_msg.c_str();
+	}
+
+private:
+	std::string error_msg;
+};
+
 class DbcFileIsMissingVersion : public ValidityError {
 public:
 	DbcFileIsMissingVersion(const std::string& line) {

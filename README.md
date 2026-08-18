@@ -23,6 +23,65 @@ cmake -DCMAKE_BUILD_TYPE=Debug -Bbuild -H.
 cmake --build build
 ```
 
+### Installing and consuming with CMake
+
+The library installs a CMake package, so downstream projects can use `find_package`:
+
+```bash
+cmake -Bbuild -H. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local
+cmake --build build
+cmake --install build
+```
+
+Then in your `CMakeLists.txt`:
+```cmake
+find_package(dbc REQUIRED)
+target_link_libraries(my_app PRIVATE Libdbc::dbc)
+```
+
+A `dbc.pc` pkg-config file is installed as well.
+
+## Usage
+
+```cpp
+#include <libdbc/dbc.hpp>
+#include <cstdio>
+
+int main() {
+    Libdbc::DbcParser parser;
+    try {
+        parser.parse_file("my_database.dbc");
+
+        std::printf("DBC version: %s, %zu messages\n",
+                    parser.get_version().c_str(), parser.get_messages().size());
+
+        // Decode an 8-byte CAN frame for message id 234.
+        const std::vector<uint8_t> data{0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+        std::vector<double> values;
+        auto status = parser.parse_message(234, data, values);
+        if (status == Libdbc::Message::ParseSignalsStatus::Success) {
+            const auto* msg = parser.get_message_by_id(234);
+            for (size_t i = 0; i < values.size(); ++i) {
+                std::printf("%s = %f\n", msg->get_signals().at(i).name.c_str(), values.at(i));
+            }
+        }
+
+        // Lines from unsupported DBC sections (CM_, BA_, ...) are not lost:
+        for (const auto& line : parser.unused_lines()) { /* inspect */ }
+    } catch (const Libdbc::Exception& e) {
+        std::fprintf(stderr, "parse error: %s\n", e.what());
+    }
+}
+```
+
+Multiplexed messages (`M` / `m<N>` markers) are supported: `parse_message` decodes the
+multiplexor, the non-multiplexed signals, and only the multiplexed branch selected by
+the multiplexor's raw value — so `values` can contain fewer entries than the message
+has signals.
+
+A runnable version of the above lives in [`examples/parse_dbc.cpp`](examples/parse_dbc.cpp).
+
+
 ### Listing Build Options
 
 You can check the latest build options with cmake. After you configure cmake you can run this.

@@ -10,27 +10,31 @@
 namespace Libdbc {
 struct Message {
 	Message() = delete;
-	virtual ~Message() = default;
+	~Message() = default;
 	explicit Message(uint32_t message_id, const std::string& name, uint8_t size, const std::string& node);
 
 	enum class ParseSignalsStatus {
 		Success,
 		ErrorMessageToLong,
-		ErrorBigEndian,
 		ErrorUnknownID,
-		ErrorInvalidConversion,
+		ErrorInvalidSignalSize,
+		ErrorSignalOutOfBounds,
 	};
 
+	// Decodes `data` into physical values, appended to `values` in signal
+	// declaration order. If the message contains a multiplexor, only the
+	// multiplexor and the multiplexed signals matching its raw value are
+	// decoded, so `values` may have fewer entries than there are signals.
 	ParseSignalsStatus parse_signals(const std::vector<uint8_t>& data, std::vector<double>& values) const;
 
 	void append_signal(const Signal& signal);
-	std::vector<Signal> get_signals() const;
+	const std::vector<Signal>& get_signals() const;
 	uint32_t id() const;
 	uint8_t size() const;
 	const std::string& name() const;
 	void add_value_description(const std::string& signal_name, const std::vector<Signal::ValueDescription>&);
 
-	virtual bool operator==(const Message& rhs) const;
+	bool operator==(const Message& rhs) const;
 
 private:
 	uint32_t m_id;
