@@ -474,7 +474,7 @@ TEST_CASE("Parse Message with an intermediate CAN FD DLC size (32 bytes)") {
 	REQUIRE(Catch::Approx(out_values.at(0)) == 25.0); // 10 * 2 + 5
 }
 
-TEST_CASE("Parse signal with SG_ on single line should fail.") {
+TEST_CASE("Parse Message with SG_ on single line should fail.") {
 	std::string dbc_contents = PRIMITIVE_DBC + R"(BO_ 234 MSG1: 8 Vector__XXX
  SG_
 State1 : 0|8@1+ (1,0) [0|200] "Km/h"  DEVICE1,DEVICE2,DEVICE3
@@ -491,4 +491,119 @@ VAL_ 234 State1 123 "Description 1" 0 "Description 2" 90903489 "Big value and sp
 	REQUIRE(p.parse_message(234, data, result_values) == Libdbc::Message::ParseSignalsStatus::Success);
 	REQUIRE(result_values.size() == 1);
 	REQUIRE(Catch::Approx(result_values.at(0)) == 0x1);
+}
+
+TEST_CASE("Parse Message CanFrame distinguishes classic and CAN FD frames") {
+	std::string dbc_contents = PRIMITIVE_DBC + R"(BO_ 100 MSG_CLASSIC: 8 Vector__XXX
+ SG_ Sig : 0|8@1+ (2,1) [0|0] "" Vector__XXX
+BO_ 200 MSG_FD: 64 Vector__XXX
+ SG_ Sig : 0|8@1+ (2,1) [0|0] "" Vector__XXX)";
+	const auto filename = create_temporary_dbc_with(dbc_contents.c_str());
+
+	Libdbc::DbcParser p;
+	p.parse_file(filename);
+
+	std::vector<double> out_values;
+
+	SECTION("Classic frame with 8 bytes decodes") {
+		Libdbc::CanFrame frame;
+		frame.id = 100;
+		frame.data = std::vector<uint8_t>(8, 0);
+		frame.data[0] = 10;
+		REQUIRE(p.parse_message(frame, out_values) == Libdbc::Message::ParseSignalsStatus::Success);
+		REQUIRE(out_values.size() == 1);
+		REQUIRE(Catch::Approx(out_values.at(0)) == 21.0); // 10 * 2 + 1
+	}
+
+	SECTION("Classic frame with 9 bytes is rejected") {
+		Libdbc::CanFrame frame;
+		frame.id = 100;
+		frame.data = std::vector<uint8_t>(9, 0);
+		REQUIRE(p.parse_message(frame, out_values) == Libdbc::Message::ParseSignalsStatus::ErrorClassicFrameTooLong);
+	}
+
+	SECTION("Classic frame with BRS set is rejected") {
+		Libdbc::CanFrame frame;
+		frame.id = 100;
+		frame.brs = true;
+		frame.data = std::vector<uint8_t>(8, 0);
+		REQUIRE(p.parse_message(frame, out_values) == Libdbc::Message::ParseSignalsStatus::ErrorInvalidFlags);
+	}
+
+	SECTION("Classic frame with ESI set is rejected") {
+		Libdbc::CanFrame frame;
+		frame.id = 100;
+		frame.esi = true;
+		frame.data = std::vector<uint8_t>(8, 0);
+		REQUIRE(p.parse_message(frame, out_values) == Libdbc::Message::ParseSignalsStatus::ErrorInvalidFlags);
+	}
+
+	SECTION("CAN FD frame with 64 bytes and both flags set decodes") {
+		Libdbc::CanFrame frame;
+		frame.id = 200;
+		frame.is_fd = true;
+		frame.brs = true;
+		frame.esi = true;
+		frame.data = std::vector<uint8_t>(64, 0);
+		frame.data[0] = 10;
+		REQUIRE(p.parse_message(frame, out_values) == Libdbc::Message::ParseSignalsStatus::Success);
+		REQUIRE(out_values.size() == 1);
+		REQUIRE(Catch::Approx(out_values.at(0)) == 21.0);
+	}
+
+	SECTION("CAN FD frame with an intermediate DLC size (12 bytes) without flags decodes") {
+		Libdbc::CanFrame frame;
+		frame.id = 200;
+		frame.is_fd = true;
+		frame.data = std::vector<uint8_t>(12, 0);
+		frame.data[0] = 10;
+		REQUIRE(p.parse_message(frame, out_values) == Libdbc::Message::ParseSignalsStatus::Success);
+		REQUIRE(Catch::Approx(out_values.at(0)) == 21.0);
+	}
+
+	SECTION("CAN FD frame longer than 64 bytes is rejected") {
+		Libdbc::CanFrame frame;
+		frame.id = 200;
+		frame.is_fd = true;
+		frame.data = std::vector<uint8_t>(65, 0);
+		REQUIRE(p.parse_message(frame, out_values) == Libdbc::Message::ParseSignalsStatus::ErrorMessageToLong);
+	}
+
+	SECTION("Unknown frame id is rejected") {
+		Libdbc::CanFrame frame;
+		frame.id = 999;
+		frame.data = std::vector<uint8_t>(8, 0);
+		REQUIRE(p.parse_message(frame, out_values) == Libdbc::Message::ParseSignalsStatus::ErrorUnknownID);
+	}
+}
+
+TEST_CASE("Message::parse_signals CanFrame overload validates the frame type") {
+	std::string dbc_contents = PRIMITIVE_DBC + R"(BO_ 300 MSG1: 8 Vector__XXX
+ SG_ Sig : 0|8@1+ (1,0) [0|0] "" Vector__XXX)";
+	const auto filename = create_temporary_dbc_with(dbc_contents.c_str());
+
+	Libdbc::DbcParser p;
+	p.parse_file(filename);
+
+	const auto* message = p.get_message_by_id(300);
+	REQUIRE(message != nullptr);
+
+	std::vector<double> out_values;
+
+	Libdbc::CanFrame classic_frame;
+	classic_frame.id = 300;
+	classic_frame.data = std::vector<uint8_t>(8, 0xAB);
+	REQUIRE(message->parse_signals(classic_frame, out_values) == Libdbc::Message::ParseSignalsStatus::Success);
+	REQUIRE(Catch::Approx(out_values.at(0)) == 0xAB);
+
+	Libdbc::CanFrame bad_flags_frame;
+	bad_flags_frame.id = 300;
+	bad_flags_frame.esi = true;
+	bad_flags_frame.data = std::vector<uint8_t>(8, 0);
+	REQUIRE(message->parse_signals(bad_flags_frame, out_values) == Libdbc::Message::ParseSignalsStatus::ErrorInvalidFlags);
+
+	Libdbc::CanFrame too_long_frame;
+	too_long_frame.id = 300;
+	too_long_frame.data = std::vector<uint8_t>(9, 0);
+	REQUIRE(message->parse_signals(too_long_frame, out_values) == Libdbc::Message::ParseSignalsStatus::ErrorClassicFrameTooLong);
 }

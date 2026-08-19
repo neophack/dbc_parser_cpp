@@ -13,6 +13,7 @@ constexpr unsigned ONE_BYTE = 8;
 constexpr uint32_t BYTES_PER_UINT64 = 8;
 constexpr uint32_t MAX_SIGNAL_BITS = 64;
 constexpr size_t MAX_MESSAGE_BYTES = 64;
+constexpr size_t MAX_CLASSIC_FRAME_BYTES = 8;
 
 // Returns a mask with the low `bits` bits set. Shifting a 64-bit value by 64
 // is undefined behavior, so the full-width case is handled explicitly.
@@ -109,6 +110,16 @@ Message::Message(uint32_t message_id, const std::string& name, uint8_t size, con
 
 bool Message::operator==(const Message& rhs) const {
 	return (m_id == rhs.id()) && (m_name == rhs.m_name) && (m_size == rhs.m_size) && (m_node == rhs.m_node);
+}
+
+Message::ParseSignalsStatus Message::parse_signals(const CanFrame& frame, std::vector<double>& values) const {
+	if (!frame.is_fd && (frame.brs || frame.esi)) {
+		return ParseSignalsStatus::ErrorInvalidFlags;
+	}
+	if (!frame.is_fd && frame.data.size() > MAX_CLASSIC_FRAME_BYTES) {
+		return ParseSignalsStatus::ErrorClassicFrameTooLong;
+	}
+	return parse_signals(frame.data, values);
 }
 
 Message::ParseSignalsStatus Message::parse_signals(const std::vector<uint8_t>& data, std::vector<double>& values) const {

@@ -34,6 +34,7 @@ public:
 	const Message* get_message_by_id(uint32_t message_id) const;
 
 	Message::ParseSignalsStatus parse_message(uint32_t message_id, const std::vector<uint8_t>& data, std::vector<double>& out_values) const;
+	Message::ParseSignalsStatus parse_message(const CanFrame& frame, std::vector<double>& out_values) const;
 
 	const std::vector<std::string>& unused_lines() const;
 

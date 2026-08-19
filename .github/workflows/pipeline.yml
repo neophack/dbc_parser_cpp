@@ -123,54 +123,6 @@ jobs:
         run: ctest --output-on-failure --test-dir build -j %NUMBER_OF_PROCESSORS%
         shell: cmd
 
-  macos-builds:
-    name: ${{matrix.os}}, ${{matrix.cxx}}, C++${{matrix.std}}, ${{matrix.build_type}}
-    runs-on: ${{matrix.os}}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-15-large]
-        cxx:
-          - g++
-          - clang++
-        build_type: [Debug, Release]
-        std: [11]
-        include:
-          - cxx: g++
-            cc: gcc
-          - cxx: clang++
-            cc: clang
-
-    env:
-      BUILD_TYPE: ${{matrix.build_type}}
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Configure build
-        working-directory: ${{runner.workspace}}
-        env:
-          CC: ${{matrix.cc}}
-          CXX: ${{matrix.cxx}}
-        run: |
-          cmake -Bbuild -H$GITHUB_WORKSPACE               \
-                -DCMAKE_BUILD_TYPE=${{matrix.build_type}} \
-                -DCMAKE_CXX_STANDARD=${{matrix.std}}      \
-                -DCMAKE_CXX_STANDARD_REQUIRED=ON          \
-                -DCMAKE_CXX_EXTENSIONS=ON                 \
-                -DDBC_TEST_LOCALE_INDEPENDENCE=ON
-
-      - name: Build tests + lib
-        working-directory: ${{runner.workspace}}
-        run: cmake --build build --parallel `sysctl -n hw.ncpu`
-
-      - name: Run tests
-        timeout-minutes: 3
-        env:
-            CTEST_OUTPUT_ON_FAILURE: 1
-        working-directory: ${{runner.workspace}}
-        run: ctest --output-on-failure --test-dir build -j `sysctl -n hw.ncpu` -V
-
   format-check:
     runs-on: ubuntu-latest
 

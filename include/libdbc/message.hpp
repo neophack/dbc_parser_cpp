@@ -8,6 +8,18 @@
 #include <vector>
 
 namespace Libdbc {
+
+// A received CAN / CAN FD frame. `is_fd` distinguishes a CAN FD frame from a
+// classic CAN frame; `brs` (bit rate switch) and `esi` (error state indicator)
+// are CAN FD control flags and are rejected on classic frames.
+struct CanFrame {
+	uint32_t id = 0;
+	bool is_fd = false;
+	bool brs = false;
+	bool esi = false;
+	std::vector<uint8_t> data;
+};
+
 struct Message {
 	Message() = delete;
 	~Message() = default;
@@ -19,6 +31,8 @@ struct Message {
 		ErrorUnknownID,
 		ErrorInvalidSignalSize,
 		ErrorSignalOutOfBounds,
+		ErrorClassicFrameTooLong,
+		ErrorInvalidFlags,
 	};
 
 	// Decodes `data` into physical values, appended to `values` in signal
@@ -26,6 +40,12 @@ struct Message {
 	// multiplexor and the multiplexed signals matching its raw value are
 	// decoded, so `values` may have fewer entries than there are signals.
 	ParseSignalsStatus parse_signals(const std::vector<uint8_t>& data, std::vector<double>& values) const;
+
+	// Frame-aware overload: validates the frame type before decoding.
+	//  - classic frame with more than 8 data bytes  -> ErrorClassicFrameTooLong
+	//  - classic frame with brs/esi set              -> ErrorInvalidFlags
+	//  - CAN FD frame with more than 64 data bytes   -> ErrorMessageToLong
+	ParseSignalsStatus parse_signals(const CanFrame& frame, std::vector<double>& values) const;
 
 	void append_signal(const Signal& signal);
 	const std::vector<Signal>& get_signals() const;

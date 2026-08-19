@@ -203,6 +203,14 @@ Message::ParseSignalsStatus DbcParser::parse_message(const uint32_t message_id, 
 	return Message::ParseSignalsStatus::ErrorUnknownID;
 }
 
+Message::ParseSignalsStatus DbcParser::parse_message(const CanFrame& frame, std::vector<double>& out_values) const {
+	auto iter = message_id_to_index.find(frame.id);
+	if (iter != message_id_to_index.end()) {
+		return messages[iter->second].parse_signals(frame, out_values);
+	}
+	return Message::ParseSignalsStatus::ErrorUnknownID;
+}
+
 void DbcParser::parse_dbc_header(std::istream& file_stream) {
 	std::string line;
 	std::smatch match;
