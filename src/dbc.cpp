@@ -301,8 +301,7 @@ void DbcParser::parse_signal_line(const std::string& line, const std::smatch& ma
 	double max = 0;
 	if (!Utils::String::try_convert_to_double(match.str(SIGNAL_FACTOR_GROUP), factor)
 		|| !Utils::String::try_convert_to_double(match.str(SIGNAL_OFFSET_GROUP), offset)
-		|| !Utils::String::try_convert_to_double(match.str(SIGNAL_MIN_GROUP), min)
-		|| !Utils::String::try_convert_to_double(match.str(SIGNAL_MAX_GROUP), max)) {
+		|| !Utils::String::try_convert_to_double(match.str(SIGNAL_MIN_GROUP), min) || !Utils::String::try_convert_to_double(match.str(SIGNAL_MAX_GROUP), max)) {
 		throw DbcFileParseError(line, "Failed to parse a numeric field of signal \"" + name + "\".");
 	}
 
