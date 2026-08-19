@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <istream>
 #include <libdbc/message.hpp>
+#include <libdbc/signal.hpp>
 #include <regex>
 #include <string>
 #include <unordered_map>
@@ -64,7 +65,7 @@ private:
 
 	void parse_message_line(const std::string& line, const std::smatch& match);
 	void parse_signal_line(const std::string& line, const std::smatch& match);
-	void parse_value_line(const std::string& line, const std::smatch& match, std::vector<Value>& signal_value);
+	static void parse_value_line(const std::string& line, const std::smatch& match, std::vector<Value>& signal_value);
 
 	static std::string get_extension(const std::string& file_name);
 };
