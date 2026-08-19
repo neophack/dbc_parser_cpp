@@ -1,6 +1,8 @@
 #include <cctype>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <exception>
 #include <fstream>
 #include <istream>
 #include <libdbc/dbc.hpp>
@@ -97,12 +99,6 @@ constexpr unsigned MESSAGE_NAME_GROUP = 3;
 constexpr unsigned MESSAGE_SIZE_GROUP = 4;
 constexpr unsigned MESSAGE_NODE_GROUP = 5;
 
-struct Value {
-	uint32_t can_id;
-	std::string signal_name;
-	std::vector<Signal::ValueDescription> value_descriptions;
-};
-
 namespace {
 // Converts a numeric regex capture to uint64_t. std::stoul would throw
 // std::out_of_range / std::invalid_argument, which are not part of this
@@ -192,17 +188,17 @@ const std::vector<Libdbc::Message>& DbcParser::get_messages() const {
 }
 
 const Message* DbcParser::get_message_by_id(uint32_t message_id) const {
-	auto it = message_id_to_index.find(message_id);
-	if (it != message_id_to_index.end()) {
-		return &messages[it->second];
+	auto iter = message_id_to_index.find(message_id);
+	if (iter != message_id_to_index.end()) {
+		return &messages[iter->second];
 	}
 	return nullptr;
 }
 
 Message::ParseSignalsStatus DbcParser::parse_message(const uint32_t message_id, const std::vector<uint8_t>& data, std::vector<double>& out_values) const {
-	auto it = message_id_to_index.find(message_id);
-	if (it != message_id_to_index.end()) {
-		return messages[it->second].parse_signals(data, out_values);
+	auto iter = message_id_to_index.find(message_id);
+	if (iter != message_id_to_index.end()) {
+		return messages[iter->second].parse_signals(data, out_values);
 	}
 	return Message::ParseSignalsStatus::ErrorUnknownID;
 }
@@ -215,9 +211,12 @@ void DbcParser::parse_dbc_header(std::istream& file_stream) {
 	// "// ..." comment banner before the VERSION line. That's not part of
 	// the DBC grammar, but skip it (and any blank lines) rather than
 	// failing outright, since these files are otherwise well-formed.
-	do {
+	for (;;) {
 		Utils::StreamHandler::get_line(file_stream, line);
-	} while (!file_stream.eof() && (line.empty() || Utils::String::trim(line).rfind("//", 0) == 0));
+		if (file_stream.eof() || (!line.empty() && Utils::String::trim(line).rfind("//", 0) != 0)) {
+			break;
+		}
+	}
 
 	std::regex_search(line, match, version_re);
 
@@ -250,6 +249,98 @@ void DbcParser::parse_dbc_nodes(std::istream& file_stream) {
 	}
 }
 
+void DbcParser::parse_message_line(const std::string& line, const std::smatch& match) {
+	uint32_t message_id = static_cast<uint32_t>(to_uint(match.str(MESSAGE_ID_GROUP), line, "message id"));
+	std::string name = match.str(MESSAGE_NAME_GROUP);
+	const uint64_t message_size = to_uint(match.str(MESSAGE_SIZE_GROUP), line, "message size");
+	if (message_size > MAX_MESSAGE_SIZE_BYTES) {
+		throw DbcFileParseError(line, "Message \"" + name + "\" has an unsupported size (" + std::to_string(message_size) + "); expected at most 255 bytes.");
+	}
+	uint8_t size = static_cast<uint8_t>(message_size);
+	std::string node = match.str(MESSAGE_NODE_GROUP);
+
+	Message msg(message_id, name, size, node);
+
+	message_id_to_index[message_id] = messages.size();
+	messages.push_back(msg);
+}
+
+void DbcParser::parse_signal_line(const std::string& line, const std::smatch& match) {
+	std::string name = match.str(SIGNAL_NAME_GROUP);
+
+	// Multiplexing markers: "M" marks the multiplexor signal, "m<N>" marks
+	// a member signal that is only active when the multiplexor value is N.
+	bool is_multiplexed = false;
+	bool is_multiplexor = false;
+	int32_t multiplex_value = -1;
+	const std::string multiplex_marker = match.str(SIGNAL_MULTIPLEX_GROUP);
+	if (multiplex_marker == "M") {
+		is_multiplexor = true;
+	} else if (!multiplex_marker.empty()) {
+		is_multiplexed = true;
+		multiplex_value = static_cast<int32_t>(to_uint(multiplex_marker.substr(1), line, "multiplex value"));
+	}
+
+	uint32_t start_bit = static_cast<uint32_t>(to_uint(match.str(SIGNAL_START_BIT_GROUP), line, "signal start bit"));
+	uint32_t size = static_cast<uint32_t>(to_uint(match.str(SIGNAL_SIZE_GROUP), line, "signal size"));
+	if (size < 1 || size > MAX_SIGNAL_SIZE_BITS) {
+		// Some vendor exports (e.g. raw BLE/UWB payload messages) use a
+		// single signal spanning the whole message as an undissected
+		// blob, well past the 64 bits this library can decode into a
+		// double. Skip just that signal instead of failing the whole
+		// file, consistent with the MAX_MATCHABLE_LINE_LENGTH skip above.
+		missed_lines.push_back(line);
+		return;
+	}
+	bool is_bigendian = (to_uint(match.str(SIGNAL_ENDIAN_GROUP), line, "signal byte order") == 0);
+	bool is_signed = (match.str(SIGNAL_SIGNED_GROUP) == "-");
+
+	double factor = 0;
+	double offset = 0;
+	double min = 0;
+	double max = 0;
+	if (!Utils::String::try_convert_to_double(match.str(SIGNAL_FACTOR_GROUP), factor)
+		|| !Utils::String::try_convert_to_double(match.str(SIGNAL_OFFSET_GROUP), offset)
+		|| !Utils::String::try_convert_to_double(match.str(SIGNAL_MIN_GROUP), min)
+		|| !Utils::String::try_convert_to_double(match.str(SIGNAL_MAX_GROUP), max)) {
+		throw DbcFileParseError(line, "Failed to parse a numeric field of signal \"" + name + "\".");
+	}
+
+	std::string unit = match.str(SIGNAL_UNIT_GROUP);
+
+	std::vector<std::string> receivers;
+	Utils::String::split(match.str(SIGNAL_RECEIVER_GROUP), receivers, ',');
+
+	Signal sig(name, is_multiplexed, start_bit, size, is_bigendian, is_signed, factor, offset, min, max, unit, receivers);
+	sig.is_multiplexor = is_multiplexor;
+	sig.multiplex_value = multiplex_value;
+	messages.back().append_signal(sig);
+}
+
+void DbcParser::parse_value_line(const std::string& line, const std::smatch& match, std::vector<Value>& signal_value) {
+	uint32_t message_id = static_cast<uint32_t>(to_uint(match.str(2), line, "value description message id"));
+	std::string signal_name = match.str(3);
+
+	// Loop over the rest of the descriptions
+	std::string rest_of_descriptions = match.str(4);
+	std::regex description_re("\\s(\\d+)\\s\"([^\"]*)\"");
+
+	std::sregex_iterator desc_iter(rest_of_descriptions.begin(), rest_of_descriptions.end(), description_re);
+	std::sregex_iterator desc_end = std::sregex_iterator();
+
+	std::vector<Signal::ValueDescription> values{};
+	for (std::sregex_iterator i = desc_iter; i != desc_end; ++i) {
+		std::smatch desc_match = *desc_iter;
+		uint32_t number = static_cast<uint32_t>(to_uint(desc_match.str(1), line, "value description number"));
+		std::string text = desc_match.str(2);
+
+		values.push_back(Signal::ValueDescription{number, text});
+		++desc_iter;
+	}
+
+	signal_value.push_back(Value{message_id, signal_name, values});
+}
+
 void DbcParser::parse_dbc_messages(const std::vector<std::string>& lines) {
 	std::smatch match;
 
@@ -271,100 +362,17 @@ void DbcParser::parse_dbc_messages(const std::vector<std::string>& lines) {
 		const bool could_be_value = line.compare(0, 4, "VAL_") == 0;
 
 		if (could_be_message && std::regex_search(line, match, message_re)) {
-			uint32_t message_id = static_cast<uint32_t>(to_uint(match.str(MESSAGE_ID_GROUP), line, "message id"));
-			std::string name = match.str(MESSAGE_NAME_GROUP);
-			const uint64_t message_size = to_uint(match.str(MESSAGE_SIZE_GROUP), line, "message size");
-			if (message_size > MAX_MESSAGE_SIZE_BYTES) {
-				throw DbcFileParseError(line,
-										"Message \"" + name + "\" has an unsupported size (" + std::to_string(message_size) + "); expected at most 255 bytes.");
-			}
-			uint8_t size = static_cast<uint8_t>(message_size);
-			std::string node = match.str(MESSAGE_NODE_GROUP);
-
-			Message msg(message_id, name, size, node);
-
-			message_id_to_index[message_id] = messages.size();
-			messages.push_back(msg);
+			parse_message_line(line, match);
 			continue;
 		}
 
 		if (could_be_signal && !messages.empty() && std::regex_search(line, match, signal_re)) {
-			std::string name = match.str(SIGNAL_NAME_GROUP);
-
-			// Multiplexing markers: "M" marks the multiplexor signal, "m<N>" marks
-			// a member signal that is only active when the multiplexor value is N.
-			bool is_multiplexed = false;
-			bool is_multiplexor = false;
-			int32_t multiplex_value = -1;
-			const std::string multiplex_marker = match.str(SIGNAL_MULTIPLEX_GROUP);
-			if (multiplex_marker == "M") {
-				is_multiplexor = true;
-			} else if (!multiplex_marker.empty()) {
-				is_multiplexed = true;
-				multiplex_value = static_cast<int32_t>(to_uint(multiplex_marker.substr(1), line, "multiplex value"));
-			}
-
-			uint32_t start_bit = static_cast<uint32_t>(to_uint(match.str(SIGNAL_START_BIT_GROUP), line, "signal start bit"));
-			uint32_t size = static_cast<uint32_t>(to_uint(match.str(SIGNAL_SIZE_GROUP), line, "signal size"));
-			if (size < 1 || size > MAX_SIGNAL_SIZE_BITS) {
-				// Some vendor exports (e.g. raw BLE/UWB payload messages) use a
-				// single signal spanning the whole message as an undissected
-				// blob, well past the 64 bits this library can decode into a
-				// double. Skip just that signal instead of failing the whole
-				// file, consistent with the MAX_MATCHABLE_LINE_LENGTH skip above.
-				missed_lines.push_back(line);
-				continue;
-			}
-			bool is_bigendian = (to_uint(match.str(SIGNAL_ENDIAN_GROUP), line, "signal byte order") == 0);
-			bool is_signed = (match.str(SIGNAL_SIGNED_GROUP) == "-");
-
-			double factor = 0;
-			double offset = 0;
-			double min = 0;
-			double max = 0;
-			if (!Utils::String::try_convert_to_double(match.str(SIGNAL_FACTOR_GROUP), factor)
-				|| !Utils::String::try_convert_to_double(match.str(SIGNAL_OFFSET_GROUP), offset)
-				|| !Utils::String::try_convert_to_double(match.str(SIGNAL_MIN_GROUP), min)
-				|| !Utils::String::try_convert_to_double(match.str(SIGNAL_MAX_GROUP), max)) {
-				throw DbcFileParseError(line, "Failed to parse a numeric field of signal \"" + name + "\".");
-			}
-
-			std::string unit = match.str(SIGNAL_UNIT_GROUP);
-
-			std::vector<std::string> receivers;
-			Utils::String::split(match.str(SIGNAL_RECEIVER_GROUP), receivers, ',');
-
-			Signal sig(name, is_multiplexed, start_bit, size, is_bigendian, is_signed, factor, offset, min, max, unit, receivers);
-			sig.is_multiplexor = is_multiplexor;
-			sig.multiplex_value = multiplex_value;
-			messages.back().append_signal(sig);
+			parse_signal_line(line, match);
 			continue;
 		}
 
 		if (could_be_value && !messages.empty() && std::regex_search(line, match, value_re)) {
-			uint32_t message_id = static_cast<uint32_t>(to_uint(match.str(2), line, "value description message id"));
-			std::string signal_name = match.str(3);
-
-			// Loop over the rest of the descriptions
-			std::string rest_of_descriptions = match.str(4);
-			std::regex description_re("\\s(\\d+)\\s\"([^\"]*)\"");
-
-			std::sregex_iterator desc_iter(rest_of_descriptions.begin(), rest_of_descriptions.end(), description_re);
-			std::sregex_iterator desc_end = std::sregex_iterator();
-
-			std::vector<Signal::ValueDescription> values{};
-			for (std::sregex_iterator i = desc_iter; i != desc_end; ++i) {
-				std::smatch desc_match = *desc_iter;
-				uint32_t number = static_cast<uint32_t>(to_uint(desc_match.str(1), line, "value description number"));
-				std::string text = desc_match.str(2);
-
-				values.push_back(Signal::ValueDescription{number, text});
-				++desc_iter;
-			}
-
-			Value val{message_id, signal_name, values};
-
-			signal_value.push_back(val);
+			parse_value_line(line, match, signal_value);
 			continue;
 		}
 

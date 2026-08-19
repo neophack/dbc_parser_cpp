@@ -1,6 +1,7 @@
 #ifndef DBC_HPP
 #define DBC_HPP
 
+#include <cstddef>
 #include <cstdint>
 #include <istream>
 #include <libdbc/message.hpp>
@@ -51,9 +52,19 @@ private:
 
 	std::vector<std::string> missed_lines;
 
+	struct Value {
+		uint32_t can_id;
+		std::string signal_name;
+		std::vector<Signal::ValueDescription> value_descriptions;
+	};
+
 	void parse_dbc_header(std::istream& file_stream);
 	void parse_dbc_nodes(std::istream& file_stream);
 	void parse_dbc_messages(const std::vector<std::string>& lines);
+
+	void parse_message_line(const std::string& line, const std::smatch& match);
+	void parse_signal_line(const std::string& line, const std::smatch& match);
+	void parse_value_line(const std::string& line, const std::smatch& match, std::vector<Value>& signal_value);
 
 	static std::string get_extension(const std::string& file_name);
 };
